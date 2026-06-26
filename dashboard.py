@@ -40,7 +40,7 @@ ORDER = ["mihomo", "frpc", "cloudflared", "redis", "mongo", "postgres",
 GROUP_ORDER = ["代理 · 穿透 · Cloudflare", "数据库", "应用服务"]
 
 _lock = threading.Lock()
-_state = {"groups": [], "sys": {}, "alerts": [], "mc_players": None, "updated": 0, "summary": {"up": 0, "warn": 0, "down": 0, "total": 0}}
+_state = {"groups": [], "sys": {}, "alerts": [], "mc_players": None, "mc_perf": None, "updated": 0, "summary": {"up": 0, "warn": 0, "down": 0, "total": 0}}
 _prev = {"cpu": None, "net": None, "t": None}
 
 
@@ -471,6 +471,13 @@ def build_alerts(items, sysd):
         add("critical", "net", "外网直连中断,疑似网络 / ISP 异常")
     if not _probe["proxy"]:
         add("warning", "proxy", "代理出口不通,依赖外网 API 的服务(LiteLLM / SillyTavern 等)可能失效")
+    perf = mc_perf_cached()
+    if perf and perf.get("tps_1m") is not None:
+        t = perf["tps_1m"]
+        if t < 14:
+            add("critical", "tps", "MC 服务器严重卡顿,TPS %.1f(正常 20)" % t)
+        elif t < 18:
+            add("warning", "tps", "MC 服务器 TPS 偏低 %.1f(正常 20)" % t)
     for it in items:
         if it["level"] == "down":
             add("critical", "svc_" + it["id"], "%s 已停止运行" % it["name"])
@@ -548,6 +555,46 @@ def players_cached():
         return _pcache["data"]
 
 
+_perfcache = {"t": 0, "data": None}
+_perflock = threading.Lock()
+
+
+def mc_perf():
+    props = mc_props()
+    if props.get("enable-rcon", "") != "true":
+        return None
+    pw = props.get("rcon.password", "")
+    try:
+        port = int(props.get("rcon.port", "25575"))
+    except Exception:
+        port = 25575
+    if not pw:
+        return None
+    res = rcon_exec(["tps", "mspt"], port, pw)
+    if not res or len(res) < 2:
+        return None
+
+    def vals(s):
+        s = re.sub("§.", "", s)
+        after = s.split(":", 1)[1] if ":" in s else s
+        return [float(x) for x in re.findall(r"\d+\.?\d*", after)]
+    tps, mspt = vals(res[0]), vals(res[1])
+    if not tps:
+        return None
+    return {"tps_1m": round(tps[0], 1),
+            "mspt_avg": round(mspt[0], 1) if mspt else None,
+            "mspt_max": round(mspt[8], 1) if len(mspt) >= 9 else (round(max(mspt), 1) if mspt else None)}
+
+
+def mc_perf_cached():
+    with _perflock:
+        if _perfcache["t"] and time.time() - _perfcache["t"] < 3.0:
+            return _perfcache["data"]
+        _perfcache["data"] = mc_perf()
+        _perfcache["t"] = time.time()
+        return _perfcache["data"]
+
+
 def collect():
     ps, stats = docker_ps(), docker_stats()
     items = {sid: eval_item(sid, ps, stats) for sid in ORDER}
@@ -578,6 +625,7 @@ def collect():
         _state["sys"] = sysd
         _state["alerts"] = alerts
         _state["mc_players"] = mcp
+        _state["mc_perf"] = mc_perf_cached()
         _state["updated"] = int(time.time())
         _state["summary"] = {"up": up, "warn": warn, "down": down, "total": up + warn + down}
 
@@ -623,6 +671,13 @@ def detail(sid):
     elif k == "port":
         st = mc_status("127.0.0.1", svc["port"])
         tiles = [("状态", base["detail"]), ("端口", str(svc["port"]))]
+        perf = mc_perf_cached()
+        if perf:
+            tiles.append(("TPS (1m)", "%.1f" % perf["tps_1m"]))
+            if perf.get("mspt_avg") is not None:
+                tiles.append(("MSPT 平均", "%.1f ms" % perf["mspt_avg"]))
+            if perf.get("mspt_max") is not None:
+                tiles.append(("MSPT 峰值", "%.1f ms" % perf["mspt_max"]))
         if st:
             tiles += [("在线人数", "%d / %d" % (st["online"], st["max"])),
                       ("版本", st.get("version") or "-"),
@@ -912,24 +967,30 @@ function renderOverview(){
       <div class="charts">${chart('CPU 使用率',HIST.cpu,'%','#30bcb0',100)}${chart('内存使用率',HIST.mem,'%','#8957e5',100)}${chart('系统负载 1m',HIST.load,'','#d29922',null)}</div></section>`;
   }
   document.getElementById('view').innerHTML=sys+charts+secs+'<div id="pwall"></div>';
-  renderPwall(DATA.mc_players);
+  renderPwall(DATA.mc_players,DATA.mc_perf);
 }
 function pcols(n){return n<=1?1:n<=2?2:n<=3?3:n<=8?4:n<=15?5:6}
-function renderPwall(ps){
+function tpsColor(t){return t>=19?'#3fb950':t>=15?'#d29922':'#f85149'}
+function perfHtml(pf){
+  if(!pf||pf.tps_1m==null)return'';
+  return ` · <span style="color:${tpsColor(pf.tps_1m)}">TPS ${pf.tps_1m}</span><span style="color:var(--tx3)"> · MSPT ${pf.mspt_avg==null?'-':pf.mspt_avg+'ms'}</span>`;
+}
+function renderPwall(ps,pf){
   const el=document.getElementById('pwall');if(!el)return;
+  const h=perfHtml(pf);
   if(ps&&ps.length){
     const cols=pcols(ps.length);
-    el.innerHTML=`<section class="sec full psec-home"><h2><span class="bar2"></span>在线玩家 · ${ps.length} 人</h2>
+    el.innerHTML=`<section class="sec full psec-home"><h2><span class="bar2"></span>在线玩家 · ${ps.length} 人${h}</h2>
       <div class="pcards" style="grid-template-columns:repeat(${cols},1fr)">${ps.map(pcard).join('')}</div></section>`;
   } else if(ps&&ps.length===0){
-    el.innerHTML='<section class="sec full psec-home"><h2><span class="bar2"></span>在线玩家</h2><div class="phint">当前无玩家在线</div></section>';
+    el.innerHTML=`<section class="sec full psec-home"><h2><span class="bar2"></span>在线玩家 · 0 人${h}</h2><div class="phint">当前无玩家在线</div></section>`;
   } else { el.innerHTML=''; }
 }
 async function pollPlayers(){
   if(curRoute())return;
   try{const j=await(await fetch('/api/players',{cache:'no-store'})).json();
-    if(DATA)DATA.mc_players=j.players;
-    renderPwall(j.players);
+    if(DATA){DATA.mc_players=j.players;DATA.mc_perf=j.perf;}
+    renderPwall(j.players,j.perf);
   }catch(e){}
 }
 setInterval(pollPlayers,2000);
@@ -1065,7 +1126,7 @@ class H(BaseHTTPRequestHandler):
         elif u.path == "/api/history":
             self._send(json.dumps(history(q.get("range", ["60"])[0])))
         elif u.path == "/api/players":
-            self._send(json.dumps({"players": players_cached()}))
+            self._send(json.dumps({"players": players_cached(), "perf": mc_perf_cached()}))
         else:
             self._send(HTML, "text/html; charset=utf-8")
 
