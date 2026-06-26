@@ -1,0 +1,13 @@
+[Unit]
+Description=NEC Service Monitor Dashboard
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/zuens2020/dashboard
+ExecStart=/usr/bin/python3 /home/zuens2020/dashboard/dashboard.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
