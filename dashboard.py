@@ -935,8 +935,9 @@ async function pollPlayers(){
 setInterval(pollPlayers,2000);
 function pcard(p){
   const valid=typeof p.hp==='number';
-  const hp=valid?p.hp:0,food=parseInt(p.food)||0;
-  const cls=!valid?'':hp<=0?'dead':hp<=6?'danger':'';
+  const hp=valid?p.hp:0;
+  const fn=parseInt(p.food),fvalid=!isNaN(fn),food=fvalid?fn:0;
+  const cls=!valid?'':hp<=0?'dead':((hp<10)||(fvalid&&fn<10))?'danger':'';
   const nm=encodeURIComponent(p.name);
   return `<div class="pcard ${cls}">
     <img class="pav" src="https://minotar.net/helm/${nm}/56.png" onerror="this.onerror=null;this.src='https://minotar.net/helm/MHF_Steve/56.png'">
