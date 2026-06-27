@@ -394,6 +394,50 @@ def rcon_exec(cmds, port, password, host=None, timeout=3):
 _DIM = {"minecraft:overworld": "主世界", "minecraft:the_nether": "下界", "minecraft:the_end": "末地"}
 _GAMET = {"0": "生存", "1": "创造", "2": "冒险", "3": "旁观"}
 
+_session = {}  # 玩家名 -> 本次上线 unix 时间
+_sessionlock = threading.Lock()
+
+
+def fmt_session(s):
+    s = int(s)
+    if s < 45:
+        return "刚刚"
+    return fmt_dur(s)
+
+
+def _join_from_log(name):
+    log = mc_log_path()
+    if not log:
+        return None
+    try:
+        with open(log, errors="replace") as f:
+            lines = f.readlines()[-800:]
+    except Exception:
+        return None
+    lt = time.localtime()
+    last = None
+    pat = re.compile(r"\[(\d\d):(\d\d):(\d\d)\].*?" + re.escape(name) + r" joined the game")
+    for ln in lines:
+        m = pat.search(ln)
+        if not m:
+            continue
+        h, mi, se = map(int, m.groups())
+        last = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, h, mi, se, 0, 0, -1))
+    return last
+
+
+def touch_player_sessions(names):
+    now = time.time()
+    cur = set(names)
+    with _sessionlock:
+        for n in names:
+            if n not in _session:
+                _session[n] = _join_from_log(n) or now
+        for n in list(_session):
+            if n not in cur:
+                del _session[n]
+        return {n: int(now - _session[n]) for n in names}
+
 
 def _after(s):
     m = re.search(r"data:\s*(.*)$", s.strip())
@@ -422,6 +466,7 @@ def mc_players_detail():
     names = [x.strip() for x in m.group(1).split(",")] if (m and m.group(1).strip()) else []
     names = [n for n in names if n]
     if not names:
+        touch_player_sessions([])
         return []
     fields = ["Health", "Pos", "Dimension", "foodLevel", "XpLevel", "playerGameType"]
     eq = ["head", "chest", "legs", "feet"]  # 头 胸 腿 脚(1.21 穿戴的甲在 equipment 字段,不在 Inventory 槽)
@@ -455,6 +500,10 @@ def mc_players_detail():
         players.append({"name": n, "hp": hp, "pos": coord,
                         "dim": _DIM.get(dim, dim or "-"), "food": food, "xp": xp,
                         "mode": mode, "armor": armor})
+    sess = touch_player_sessions(names)
+    for p in players:
+        p["online_secs"] = sess.get(p["name"], 0)
+        p["online_for"] = fmt_session(sess.get(p["name"], 0))
     sec = security_snapshot()
     for p in players:
         p["place"] = sec["places"].get(p["name"], 0)
@@ -1397,6 +1446,7 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .pflag.w{background:rgba(210,153,34,.18);color:#e3b341}
 .pflag.c{background:rgba(248,81,73,.2);color:#ff7b72}
 .pmode{font-size:11px;color:var(--tx3);border:1px solid var(--bd);padding:1px 7px;font-weight:400;flex:0 0 auto}
+.psess{font-size:11px;color:var(--tx3);border:1px solid var(--bd);padding:1px 7px;font-weight:400;flex:0 0 auto;font-variant-numeric:tabular-nums}
 .pbar{position:relative;height:14px;background:#0c1016;border:1px solid var(--bd);margin-bottom:4px;overflow:hidden}
 .pbar i{display:block;height:100%;transition:width .5s}
 .pbar.hp i{background:#d23b3b}.pbar.food i{background:#c8862f}
@@ -1576,7 +1626,7 @@ function pcard(p){
   return `<div class="pcard ${cls}">
     <img class="pav" src="https://minotar.net/helm/${nm}/56.png" onerror="this.onerror=null;this.src='https://minotar.net/helm/MHF_Steve/56.png'">
     <div class="pinfo">
-      <div class="pname">${esc(p.name)}<span class="pmode">${esc(p.mode)}</span>${pbadge}</div>
+      <div class="pname">${esc(p.name)}<span class="pmode">${esc(p.mode)}</span><span class="psess">${esc(p.online_for||'-')}</span>${pbadge}</div>
       <div class="pbar hp"><i style="width:${Math.max(0,Math.min(100,hp/20*100))}%"></i><span>HP ${hp} / 20</span></div>
       <div class="pbar food"><i style="width:${Math.max(0,Math.min(100,food/20*100))}%"></i><span>FOOD ${food} / 20</span></div>
       <div class="pmeta"><span class="pcoord">${esc(p.dim)} · Lv.${esc(String(p.xp))} · ${esc(p.pos)}</span><span class="parmor">${armorSlotsHtml(p.armor)}</span></div>
@@ -1647,8 +1697,8 @@ async function detailView(id){
       if(d.players===null)pe.innerHTML='<div class="phint">⚙ RCON 未启用或未连接 —— 重启服务器后,这里显示每个在线玩家的血量 / 坐标 / 维度 / 饥饿 / 经验 / 模式</div>';
       else if(d.players.length===0)pe.innerHTML='<div class="phint">当前无玩家在线</div>';
       else pe.innerHTML=`<div class="psec"><h3>在线玩家状态 · RCON 实时</h3><table class="ptab">
-        <thead><tr><th>玩家</th><th>血量</th><th>维度</th><th>坐标 (X Y Z)</th><th>饥饿</th><th>经验</th><th>模式</th><th>护甲</th></tr></thead>
-        <tbody>${d.players.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.hp} / 20</td><td>${esc(p.dim)}</td><td class="mono">${esc(p.pos)}</td><td>${p.food} / 20</td><td>Lv.${p.xp}</td><td>${esc(p.mode)}</td><td><span class="parmor">${armorSlotsHtml(p.armor)}</span></td></tr>`).join('')}</tbody></table></div>`;
+        <thead><tr><th>玩家</th><th>血量</th><th>维度</th><th>坐标 (X Y Z)</th><th>饥饿</th><th>经验</th><th>模式</th><th>在线时长</th><th>护甲</th></tr></thead>
+        <tbody>${d.players.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.hp} / 20</td><td>${esc(p.dim)}</td><td class="mono">${esc(p.pos)}</td><td>${p.food} / 20</td><td>Lv.${p.xp}</td><td>${esc(p.mode)}</td><td>${esc(p.online_for||'-')}</td><td><span class="parmor">${armorSlotsHtml(p.armor)}</span></td></tr>`).join('')}</tbody></table></div>`;
     }
     const se=document.getElementById('secsec');
     if(se&&d.security){
