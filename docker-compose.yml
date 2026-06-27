@@ -1,0 +1,14 @@
+services:
+  dashboard:
+    build: .
+    image: mc-server-monitor:latest
+    container_name: mc-dashboard
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${DASHBOARD_PORT:-8765}:8765"
+    volumes:
+      - ./data:/data
+      - ${CRAFTY_DATA_DIR:-./crafty}:/crafty:ro
+    # 需要读宿主机 /proc、直连 MC/RCON/Crafty 时取消下行注释:
+    # network_mode: host
