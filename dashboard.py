@@ -3,7 +3,7 @@
 """Minecraft 服务器监控面板 — Crafty 风格 / 全直角 / 可配置 / Docker 就绪。纯标准库。"""
 import glob, json, os, re, shutil, socket, sqlite3, ssl, struct, subprocess, threading, time
 import urllib.parse, urllib.request, urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -77,10 +77,15 @@ def load_config():
         "backup_cooldown": _env_int("BACKUP_COOLDOWN_HOURS", 3) * 3600,
         "probe_direct_url": _env("PROBE_DIRECT_URL", "https://www.cloudflare.com"),
         "probe_proxy_url": _env("PROBE_PROXY_URL", "https://www.gstatic.com/generate_204"),
+        "log_tz": _env("LOG_TZ", ""),
     }
 
 
 CFG = load_config()
+if CFG["log_tz"]:
+    os.environ["TZ"] = CFG["log_tz"]
+    if hasattr(time, "tzset"):
+        time.tzset()
 PORT = CFG["port"]
 REFRESH = CFG["refresh"]
 
@@ -405,38 +410,62 @@ def fmt_session(s):
     return fmt_dur(s)
 
 
-def _join_from_log(name):
+def _logtime_to_unix(h, mi, se, ref=None):
+    # latest.log 只有 HH:MM:SS,无日期 —— 在 today/yesterday 中选不超过 ref 的最近时刻
+    ref = ref or time.time()
+    lt = time.localtime(ref)
+    base = date(lt.tm_year, lt.tm_mon, lt.tm_mday)
+    best = None
+    for delta in range(0, 3):
+        d = base - timedelta(days=delta)
+        ts = time.mktime((d.year, d.month, d.day, h, mi, se, 0, 0, -1))
+        if ts <= ref + 15 and (best is None or ts > best):
+            best = ts
+    if best is not None:
+        return best
+    d = base - timedelta(days=1)
+    return time.mktime((d.year, d.month, d.day, h, mi, se, 0, 0, -1))
+
+
+def _session_start_from_log(name, ref=None):
     log = mc_log_path()
     if not log:
         return None
+    ref = ref or time.time()
     try:
         with open(log, errors="replace") as f:
-            lines = f.readlines()[-800:]
+            lines = f.readlines()[-1200:]
     except Exception:
         return None
-    lt = time.localtime()
-    last = None
-    pat = re.compile(r"\[(\d\d):(\d\d):(\d\d)\].*?" + re.escape(name) + r" joined the game")
+    join_pat = re.compile(r"\[(\d\d):(\d\d):(\d\d)\].*?" + re.escape(name) + r" joined the game")
+    leave_pat = re.compile(r"\[(\d\d):(\d\d):(\d\d)\].*?" + re.escape(name) + r" left the game")
+    session_start = None
     for ln in lines:
-        m = pat.search(ln)
-        if not m:
+        m = join_pat.search(ln)
+        if m:
+            h, mi, se = map(int, m.groups())
+            session_start = _logtime_to_unix(h, mi, se, ref)
             continue
-        h, mi, se = map(int, m.groups())
-        last = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, h, mi, se, 0, 0, -1))
-    return last
+        m = leave_pat.search(ln)
+        if m:
+            session_start = None
+    return session_start
 
 
 def touch_player_sessions(names):
     now = time.time()
     cur = set(names)
     with _sessionlock:
-        for n in names:
-            if n not in _session:
-                _session[n] = _join_from_log(n) or now
         for n in list(_session):
             if n not in cur:
                 del _session[n]
-        return {n: int(now - _session[n]) for n in names}
+        for n in names:
+            ts = _session_start_from_log(n, now)
+            if ts is not None:
+                _session[n] = ts
+            elif n not in _session:
+                _session[n] = now
+        return {n: max(0, int(now - _session[n])) for n in names}
 
 
 def _after(s):

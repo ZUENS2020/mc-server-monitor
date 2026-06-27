@@ -8,7 +8,10 @@ services:
     network_mode: host
     pid: host
     ports: !reset []
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
     volumes:
       - ${HOST_DATA_DIR:-./data}:/data
       - ${HOST_CRAFTY_DIR:-./crafty}:/crafty:ro
       - ${HOST_PCP_DIR:-/var/log/pcp/pmlogger}:/var/log/pcp/pmlogger:ro
+      - /etc/localtime:/etc/localtime:ro
