@@ -1054,7 +1054,8 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .pmeta{font-size:11.5px;color:var(--tx3);margin-top:7px;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .pcoord{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .parmor{display:flex;gap:3px;flex:0 0 auto}
-.aslot{width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:1px solid var(--bd)}
+.aslot{width:13px;height:13px;border:1px solid var(--bd)}
+.aslot.empty{border-style:dashed;border-color:#4d5159;background:transparent}
 /* alerts */
 .alertbar{flex:0 0 auto;display:none}
 .alert{display:flex;align-items:center;gap:10px;padding:8px 22px;font-size:13.5px;border-bottom:1px solid var(--bd);border-left:4px solid}
@@ -1155,16 +1156,16 @@ function renderOverview(){
 }
 function pcols(n){return n<=1?1:n<=2?2:n<=3?3:n<=8?4:n<=15?5:6}
 function armorMat(it){
-  if(!it)return{l:'',bg:'#0e131a',fg:'#4a5360',t:'empty'};
-  if(it.startsWith('netherite_'))return{l:'N',bg:'#3a3340',fg:'#cbb8e0',t:it};
-  if(it.startsWith('diamond_'))return{l:'D',bg:'#16414a',fg:'#5fe6d8',t:it};
-  if(it.startsWith('iron_'))return{l:'I',bg:'#3a4048',fg:'#eef2f6',t:it};
-  if(it.startsWith('golden_'))return{l:'G',bg:'#4a3f1e',fg:'#f0cb5a',t:it};
-  if(it.startsWith('chainmail_'))return{l:'C',bg:'#33383f',fg:'#aab2bd',t:it};
-  if(it.startsWith('leather_'))return{l:'L',bg:'#3d2c1d',fg:'#c89366',t:it};
-  if(it==='turtle_helmet')return{l:'T',bg:'#1f3a24',fg:'#6fcf6f',t:it};
-  if(it==='elytra')return{l:'E',bg:'#332a3d',fg:'#cbb6d8',t:it};
-  return{l:'?',bg:'#2a2f37',fg:'#8b949e',t:it};
+  if(!it)return null;
+  if(it.startsWith('netherite_'))return '#4a443f';
+  if(it.startsWith('diamond_'))return '#2f8e84';
+  if(it.startsWith('iron_'))return '#9a9c9c';
+  if(it.startsWith('golden_'))return '#9c7d22';
+  if(it.startsWith('chainmail_'))return '#6a6c6e';
+  if(it.startsWith('leather_'))return '#7a5430';
+  if(it==='turtle_helmet')return '#45824a';
+  if(it==='elytra')return '#8a7e9a';
+  return '#777a7d';
 }
 function tpsColor(t){return t>=19?'#3fb950':t>=15?'#d29922':'#f85149'}
 function perfHtml(pf){
@@ -1204,7 +1205,7 @@ function pcard(p){
       <div class="pname">${esc(p.name)}<span class="pmode">${esc(p.mode)}</span>${pbadge}</div>
       <div class="pbar hp"><i style="width:${Math.max(0,Math.min(100,hp/20*100))}%"></i><span>HP ${hp} / 20</span></div>
       <div class="pbar food"><i style="width:${Math.max(0,Math.min(100,food/20*100))}%"></i><span>FOOD ${food} / 20</span></div>
-      <div class="pmeta"><span class="pcoord">${esc(p.dim)} · Lv.${esc(String(p.xp))} · ${esc(p.pos)}</span><span class="parmor">${(p.armor||[null,null,null,null]).map(it=>{const m=armorMat(it);return `<span class="aslot" style="background:${m.bg};color:${m.fg}">${m.l}</span>`}).join('')}</span></div>
+      <div class="pmeta"><span class="pcoord">${esc(p.dim)} · Lv.${esc(String(p.xp))} · ${esc(p.pos)}</span><span class="parmor">${(p.armor||[null,null,null,null]).map(it=>{const c=armorMat(it);return c?`<span class="aslot" style="background:${c}"></span>`:`<span class="aslot empty"></span>`}).join('')}</span></div>
     </div></div>`;
 }
 function chart(title,arr,unit,color,fixedMax){
