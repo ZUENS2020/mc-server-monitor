@@ -982,6 +982,86 @@ def read_alertlog(tail=40):
         return "(暂无报警记录)"
 
 
+# ---------- 性能趋势:PCP 优先,否则内存环形缓冲(Docker 无 pmrep 时) ----------
+_ring = {"t": [], "cpu": [], "mem": [], "load": [], "last": 0, "interval": 30, "max": 120}
+_RING_FILE = os.path.join(CFG["data_dir"], "metrics_ring.json")
+
+
+def _load_metric_ring():
+    try:
+        d = json.load(open(_RING_FILE))
+        for k in ("t", "cpu", "mem", "load"):
+            _ring[k] = (d.get(k) or [])[-_ring["max"]:]
+        _ring["last"] = d.get("last", 0)
+    except Exception:
+        pass
+
+
+def _save_metric_ring():
+    try:
+        json.dump({k: _ring[k] for k in ("t", "cpu", "mem", "load")} | {"last": _ring["last"]},
+                  open(_RING_FILE, "w"))
+    except Exception:
+        pass
+
+
+def record_metric_ring(sysd):
+    if not CFG["enable_host_metrics"] or not sysd:
+        return
+    now = time.time()
+    if _ring["t"] and now - _ring["last"] < _ring["interval"]:
+        return
+    _ring["last"] = now
+    _ring["t"].append(time.strftime("%H:%M"))
+    _ring["cpu"].append(sysd.get("cpu", 0))
+    _ring["mem"].append(sysd.get("mem_pct", 0))
+    try:
+        _ring["load"].append(float((sysd.get("load") or [0])[0]))
+    except (TypeError, ValueError, IndexError):
+        _ring["load"].append(0.0)
+    for k in ("t", "cpu", "mem", "load"):
+        if len(_ring[k]) > _ring["max"]:
+            _ring[k] = _ring[k][-_ring["max"]:]
+    _save_metric_ring()
+
+
+def _history_from_pcp(rng):
+    arch = newest_archive()
+    if not arch:
+        return None
+    interval = max(30, rng * 60 // 60)
+    out = {"t": [], "cpu": [], "mem": [], "load": [], "source": "pcp"}
+    csv = sh(["pmrep", "-a", arch, "-o", "csv", "-S", "-%dm" % rng, "-T", "now",
+              "-t", "%ds" % interval, "kernel.all.cpu.idle", "mem.util.available",
+              "mem.physmem", "kernel.all.load"], 20)
+    for line in csv.splitlines()[1:]:
+        p = line.split(",")
+        if len(p) < 7:
+            continue
+        idle, avail, phys, l1 = _num(p[1]), _num(p[2]), _num(p[3]), _num(p[4])
+        cpu = round(max(0, min(100, 100 * (1 - idle / (NCPU * 1000.0)))), 1) if idle is not None else None
+        mem = round(100 * (1 - avail / phys), 1) if (avail is not None and phys) else None
+        out["t"].append(p[0][11:16])
+        out["cpu"].append(cpu)
+        out["mem"].append(mem)
+        out["load"].append(l1)
+    return out if out["t"] else None
+
+
+def _seed_ring_from_pcp():
+    if _ring["t"] or not _pcp_enabled():
+        return False
+    d = _history_from_pcp(60)
+    if not d or not d.get("t"):
+        return False
+    n = _ring["max"]
+    for k in ("t", "cpu", "mem", "load"):
+        _ring[k] = d[k][-n:]
+    _ring["last"] = time.time()
+    _save_metric_ring()
+    return True
+
+
 def collect():
     ps, stats = docker_ps(), docker_stats()
     items = {sid: eval_item(sid, ps, stats) for sid in ORDER}
@@ -993,6 +1073,10 @@ def collect():
         sysd = sysstat()
     except Exception:
         sysd = {}
+    try:
+        record_metric_ring(sysd)
+    except Exception:
+        pass
     alerts = build_alerts(list(items.values()), sysd)
     try:
         do_alert_backup(alerts)
@@ -1145,8 +1229,6 @@ def _num(s):
 
 
 def history(rng="60"):
-    if not _pcp_enabled():
-        return {"t": [], "cpu": [], "mem": [], "load": []}
     try:
         rng = max(10, min(int(rng), 360))
     except Exception:
@@ -1154,24 +1236,15 @@ def history(rng="60"):
     now = time.time()
     if _hist["data"] and _hist["range"] == rng and now - _hist["t"] < 25:
         return _hist["data"]
-    arch = newest_archive()
-    interval = max(30, rng * 60 // 60)
-    out = {"t": [], "cpu": [], "mem": [], "load": []}
-    if arch:
-        csv = sh(["pmrep", "-a", arch, "-o", "csv", "-S", "-%dm" % rng, "-T", "now",
-                  "-t", "%ds" % interval, "kernel.all.cpu.idle", "mem.util.available",
-                  "mem.physmem", "kernel.all.load"], 20)
-        for line in csv.splitlines()[1:]:
-            p = line.split(",")
-            if len(p) < 7:
-                continue
-            idle, avail, phys, l1 = _num(p[1]), _num(p[2]), _num(p[3]), _num(p[4])
-            cpu = round(max(0, min(100, 100 * (1 - idle / (NCPU * 1000.0)))), 1) if idle is not None else None
-            mem = round(100 * (1 - avail / phys), 1) if (avail is not None and phys) else None
-            out["t"].append(p[0][11:16])
-            out["cpu"].append(cpu)
-            out["mem"].append(mem)
-            out["load"].append(l1)
+    out = None
+    if _pcp_enabled():
+        try:
+            out = _history_from_pcp(rng)
+        except Exception:
+            out = None
+    if not out or not out.get("t"):
+        out = {"t": _ring["t"][:], "cpu": _ring["cpu"][:], "mem": _ring["mem"][:],
+               "load": _ring["load"][:], "source": "live"}
     _hist.update(t=now, range=rng, data=out)
     return out
 
@@ -1421,7 +1494,8 @@ function renderOverview(){
   </div></section>`;
   let charts='';
   if(HIST&&HIST.t&&HIST.t.length){
-    charts=`<section class="sec full" style="margin-top:18px"><h2><span class="bar2"></span>性能趋势 · 近 60 分钟(PCP）</h2>
+    const src=HIST.source==='pcp'?'PCP':'实时采样';
+    charts=`<section class="sec full" style="margin-top:18px"><h2><span class="bar2"></span>性能趋势 · 近 60 分钟（${src}）</h2>
       <div class="charts">${chart('CPU 使用率',HIST.cpu,'%','#30bcb0',100)}${chart('内存使用率',HIST.mem,'%','#8957e5',100)}${chart('系统负载 1m',HIST.load,'','#d29922',null)}</div></section>`;
   }
   document.getElementById('view').innerHTML=mcPanel(DATA.mc||{})+sys+charts+'<div id="pwall"></div>';
@@ -1605,8 +1679,8 @@ function route(){
 }
 window.addEventListener('hashchange',route);
 async function pollHist(){try{HIST=await(await fetch('/api/history?range=60',{cache:'no-store'})).json()}catch(e){}if(!curRoute()&&DATA)renderOverview()}
-poll().then(route);setInterval(poll,5000);
-pollHist();setInterval(pollHist,30000);
+poll().then(()=>{route();pollHist();});setInterval(poll,5000);
+setInterval(pollHist,30000);
 </script></body></html>"""
 
 
@@ -1648,10 +1722,18 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    import sys
     os.makedirs(CFG["data_dir"], exist_ok=True)
     ad = os.path.dirname(CFG["alert_log"])
     if ad:
         os.makedirs(ad, exist_ok=True)
+    _load_metric_ring()
+    if len(sys.argv) > 1 and sys.argv[1] == "--seed-history":
+        ok = _seed_ring_from_pcp()
+        print("seeded %d points from PCP" % len(_ring["t"]) if ok else "seed skipped (no PCP data)")
+        sys.exit(0)
+    if not _ring["t"]:
+        _seed_ring_from_pcp()
     collect()
     threading.Thread(target=prober_loop, daemon=True).start()
     threading.Thread(target=refresher, daemon=True).start()
