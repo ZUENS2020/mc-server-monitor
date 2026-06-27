@@ -1499,7 +1499,7 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 <div class="content">
   <div class="top">
     <div class="ti"><span id="title">总览</span></div>
-    <div class="r"><div class="pills" id="pills"></div><a class="histbtn" onclick="openAlog()">报警历史</a><div class="sysmeta" id="sysmeta"></div><div id="clock"></div></div>
+    <div class="r"><div class="pills" id="pills"></div><div id="clock"></div></div>
   </div>
   <div class="alertbar" id="alertbar"></div>
   <main id="view"></main>
@@ -1554,8 +1554,6 @@ function renderChrome(){
   if(warn)ph+=`<span class="pill warn"><span class="d"></span>${warn} 警告</span>`;
   if(!ph)ph=`<span class="pill up"><span class="d"></span>运行正常</span>`;
   document.getElementById('pills').innerHTML=ph;
-  const sy=DATA.sys||{};
-  document.getElementById('sysmeta').textContent=`运行 ${sy.uptime||'-'} · 负载 ${(sy.load||[]).join(' ')}`;
   const al=DATA.alerts||[],ab=document.getElementById('alertbar');
   if(ab){
     if(al.length){ab.style.display='block';ab.innerHTML=al.map(a=>
