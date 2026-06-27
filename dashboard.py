@@ -290,15 +290,15 @@ def mc_players_detail():
     if not names:
         return []
     fields = ["Health", "Pos", "Dimension", "foodLevel", "XpLevel", "playerGameType"]
-    slots = [103, 102, 101, 100]  # 头 胸 腿 脚
+    eq = ["head", "chest", "legs", "feet"]  # 头 胸 腿 脚(1.21 穿戴的甲在 equipment 字段,不在 Inventory 槽)
     cmds = []
     for n in names:
         cmds += ["data get entity %s %s" % (n, f) for f in fields]
-        cmds += ["data get entity %s Inventory[{Slot:%db}].id" % (n, s) for s in slots]
+        cmds += ["data get entity %s equipment.%s.id" % (n, e) for e in eq]
     res = rcon_exec(cmds, port, pw)
     if res is None:
         return None
-    per = len(fields) + len(slots)  # 10
+    per = len(fields) + len(eq)  # 10
     players = []
     for i, n in enumerate(names):
         c = res[i * per:(i + 1) * per]
