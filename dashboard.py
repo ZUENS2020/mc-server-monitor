@@ -22,25 +22,14 @@ def _mc_log():
 MC_LOG = _mc_log()
 
 SERVICES = {
-    "mihomo":      {"name": "mihomo 代理",  "group": "代理 · 穿透 · Cloudflare", "kind": "systemd", "unit": "mihomo", "sub": "TUN 全局代理",        "log": ("journal_user", "mihomo")},
-    "frpc":        {"name": "frpc 樱花穿透", "group": "代理 · 穿透 · Cloudflare", "kind": "systemd", "unit": "frpc",   "sub": "frp-top.com:18650",   "log": ("journal_user", "frpc")},
-    "cloudflared": {"name": "cloudflared",  "group": "代理 · 穿透 · Cloudflare", "kind": "proc",    "proc": "cloudflared", "sub": "Cloudflare 隧道", "log": ("journal_sys", "cloudflared")},
-    "redis":       {"name": "Redis",        "group": "数据库", "kind": "container", "container": "redis",      "sub": "内网 6379",         "log": ("docker", "redis")},
-    "mongo":       {"name": "MongoDB",      "group": "数据库", "kind": "container", "container": "mongo",      "sub": "内网 27017",        "log": ("docker", "mongo")},
-    "postgres":    {"name": "PostgreSQL",   "group": "数据库", "kind": "container", "container": "litellm_db", "sub": "litellm_db · 5432", "log": ("docker", "litellm_db")},
-    "mc":          {"name": "MC 服务器",     "group": "应用服务", "kind": "port",    "port": 25565,             "sub": "Paper 1.21.10 · 25565", "log": ("file", MC_LOG)},
-    "sillytavern": {"name": "SillyTavern",  "group": "应用服务", "kind": "container", "container": "sillytavern", "port": 8000, "sub": "AI 对话 · 8000", "log": ("docker", "sillytavern")},
-    "litellm":     {"name": "LiteLLM",      "group": "应用服务", "kind": "container", "container": "litellm-litellm-1", "port": 4000, "sub": "LLM 网关 · 4000", "log": ("docker", "litellm-litellm-1")},
-    "opendesign":  {"name": "open-design",  "group": "应用服务", "kind": "container", "container": "open-design", "port": 7456, "sub": "7456",          "log": ("docker", "open-design")},
-    "searxng":     {"name": "SearXNG",      "group": "应用服务", "kind": "container", "container": "searxng",    "port": 8080, "sub": "聚合搜索 · 8080", "log": ("docker", "searxng")},
-    "n8n":         {"name": "n8n",          "group": "应用服务", "kind": "container", "container": "n8n",        "sub": "工作流自动化",       "log": ("docker", "n8n")},
+    "mc":   {"name": "MC 服务器",   "group": "Minecraft", "kind": "port",    "port": 25565, "sub": "Paper 1.21.10 · 25565", "log": ("file", MC_LOG)},
+    "frpc": {"name": "frpc 樱花穿透", "group": "Minecraft", "kind": "systemd", "unit": "frpc", "sub": "frp-top.com:18650", "log": ("journal_user", "frpc")},
 }
-ORDER = ["mihomo", "frpc", "cloudflared", "redis", "mongo", "postgres",
-         "mc", "sillytavern", "litellm", "opendesign", "searxng", "n8n"]
-GROUP_ORDER = ["代理 · 穿透 · Cloudflare", "数据库", "应用服务"]
+ORDER = ["mc", "frpc"]
+GROUP_ORDER = ["Minecraft"]
 
 _lock = threading.Lock()
-_state = {"groups": [], "sys": {}, "alerts": [], "mc_players": None, "mc_perf": None, "updated": 0, "summary": {"up": 0, "warn": 0, "down": 0, "total": 0}}
+_state = {"groups": [], "sys": {}, "alerts": [], "mc_players": None, "mc_perf": None, "mc": None, "updated": 0, "summary": {"up": 0, "warn": 0, "down": 0, "total": 0}}
 _prev = {"cpu": None, "net": None, "t": None}
 
 
@@ -500,8 +489,6 @@ def build_alerts(items, sysd):
         add("critical", "frp", "MC 隧道 frp-top.com:18650 不可达,朋友可能无法连入服务器")
     if not _probe["direct"]:
         add("critical", "net", "外网直连中断,疑似网络 / ISP 异常")
-    if not _probe["proxy"]:
-        add("warning", "proxy", "代理出口不通,依赖外网 API 的服务(LiteLLM / SillyTavern 等)可能失效")
     perf = mc_perf_cached()
     if perf and perf.get("tps_1m") is not None:
         t = perf["tps_1m"]
@@ -635,6 +622,47 @@ def mc_perf_cached():
         return _perfcache["data"]
 
 
+_mcinfo = {"t": 0, "data": None}
+_mcilock = threading.Lock()
+
+
+def mc_info():
+    with _mcilock:
+        if _mcinfo["t"] and time.time() - _mcinfo["t"] < 5:
+            return _mcinfo["data"]
+        st = mc_status()
+        perf = mc_perf_cached()
+        props = mc_props()
+        mem = uptime = "-"
+        try:
+            pids = subprocess.run(["pgrep", "-f", "paper.jar"], capture_output=True, text=True, timeout=4).stdout.split()
+            if pids:
+                o = sh(["ps", "-o", "rss=,etimes=", "-p", pids[0]]).strip().split()
+                if len(o) >= 2:
+                    rss_g = int(o[0]) / 1048576.0
+                    uptime = fmt_dur(int(o[1]))
+                    mm = re.search(r"-Xmx(\d+)([MmGg])", sh(["pgrep", "-af", "paper.jar"]))
+                    xmx_g = (int(mm.group(1)) / 1024.0 if mm.group(2).upper() == "M" else float(mm.group(1))) if mm else None
+                    mem = ("%.2f / %.1f GiB" % (rss_g, xmx_g)) if xmx_g else ("%.2f GiB" % rss_g)
+        except Exception:
+            pass
+        d = {"online": bool(st) or tcp_open(25565),
+             "players": ("%d / %d" % (st["online"], st["max"])) if st else "-",
+             "tps": perf["tps_1m"] if perf else None,
+             "mspt": perf["mspt_avg"] if perf else None,
+             "version": (st.get("version") if st and st.get("version") else "Paper 1.21.10"),
+             "difficulty": props.get("difficulty", "-"),
+             "viewdist": props.get("view-distance", "-"),
+             "mem": mem, "uptime": uptime,
+             "connect": "frp-top.com:18650",
+             "tunnel": systemd_active("frpc"),
+             "onlinemode": props.get("online-mode", "true"),
+             "motd": (st.get("motd") if st else "") or ""}
+        _mcinfo["data"] = d
+        _mcinfo["t"] = time.time()
+        return d
+
+
 # ---------- 安全检测:放置速率(CoreProtect)+ Grim 违规 ----------
 _seccache = {"t": 0, "data": None}
 _seclock = threading.Lock()
@@ -759,6 +787,7 @@ def collect():
         _state["alerts"] = alerts
         _state["mc_players"] = mcp
         _state["mc_perf"] = mc_perf_cached()
+        _state["mc"] = mc_info()
         _state["updated"] = int(time.time())
         _state["summary"] = {"up": up, "warn": warn, "down": down, "total": up + warn + down}
 
@@ -972,6 +1001,11 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .bar{height:6px;background:#0c1016;border:1px solid var(--bd);margin-top:9px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--teal);transition:width .6s}
 .bar i.w{background:var(--yel)}.bar i.c{background:var(--red)}
+/* MC 状态面板 */
+.mcrow{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+.mctile{background:var(--panel);border:1px solid var(--bd);padding:11px 14px}
+.mctile .k{font-size:11.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:7px}
+.mctile .v{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* charts */
 .charts{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .chart{background:var(--panel);border:1px solid var(--bd);padding:13px 15px}
@@ -1067,7 +1101,7 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 </style></head><body>
 <div class="content">
   <div class="top">
-    <div class="ti"><span class="mk">⬡</span><span id="title">总览</span></div>
+    <div class="ti"><span id="title">总览</span></div>
     <div class="r"><div class="pills" id="pills"></div><a class="histbtn" onclick="openAlog()">报警历史</a><div class="sysmeta" id="sysmeta"></div><div id="clock"></div></div>
   </div>
   <div class="alertbar" id="alertbar"></div>
@@ -1115,11 +1149,13 @@ async function poll(){
   if(!id)renderOverview();
 }
 function renderChrome(){
-  const s=DATA.summary;
-  document.getElementById('pills').innerHTML=
-    `<span class="pill up"><span class="d"></span>${s.up}</span>`+
-    `<span class="pill warn"><span class="d"></span>${s.warn}</span>`+
-    `<span class="pill down"><span class="d"></span>${s.down}</span>`;
+  const alz=DATA.alerts||[];
+  const crit=alz.filter(a=>a.level==='critical').length, warn=alz.filter(a=>a.level==='warning').length;
+  let ph='';
+  if(crit)ph+=`<span class="pill down"><span class="d"></span>${crit} 故障</span>`;
+  if(warn)ph+=`<span class="pill warn"><span class="d"></span>${warn} 警告</span>`;
+  if(!ph)ph=`<span class="pill up"><span class="d"></span>运行正常</span>`;
+  document.getElementById('pills').innerHTML=ph;
   const sy=DATA.sys||{};
   document.getElementById('sysmeta').textContent=`运行 ${sy.uptime||'-'} · 负载 ${(sy.load||[]).join(' ')}`;
   const al=DATA.alerts||[],ab=document.getElementById('alertbar');
@@ -1133,26 +1169,41 @@ function renderChrome(){
 function renderOverview(){
   document.getElementById('title').textContent='总览';
   const sy=DATA.sys||{};
-  const sys=`<div class="sysrow">
+  const sys=`<section class="sec full" style="margin-top:16px"><h2><span class="bar2"></span>整机资源</h2><div class="sysrow">
     ${statBar('CPU',sy.cpu+' %',(sy.ncpu||'')+' 核',sy.cpu)}
     ${statBar('内存',sy.mem_pct+' %',fg((sy.mem_used||0)*1073741824)+' / '+fg((sy.mem_total||0)*1073741824),sy.mem_pct)}
     ${statBar('磁盘 /',sy.disk_pct+' %',fg(sy.disk_used||0)+' / '+fg(sy.disk_total||0),sy.disk_pct)}
     ${statBar('Swap',sy.swap_total?Math.round(sy.swap_used/sy.swap_total*100)+' %':'0 %',fg((sy.swap_used||0)*1073741824)+' / '+fg((sy.swap_total||0)*1073741824),sy.swap_total?sy.swap_used/sy.swap_total*100:0)}
     ${statPlain('网络','↓ '+fb(sy.net_rx),'↑ '+fb(sy.net_tx))}
     ${statPlain('系统负载',(sy.load||['-'])[0],'1 / 5 / 15 min')}
-  </div>`;
-  let secs='<div class="secrow">';
-  DATA.groups.forEach((g,i)=>{
-    secs+=`<section class="sec ${i===2?'full':''}"><h2><span class="bar2"></span>${g.title}</h2><div class="grid">${g.items.map(cardHTML).join('')}</div></section>`;
-  });
-  secs+='</div>';
+  </div></section>`;
   let charts='';
   if(HIST&&HIST.t&&HIST.t.length){
     charts=`<section class="sec full" style="margin-top:18px"><h2><span class="bar2"></span>性能趋势 · 近 60 分钟(PCP）</h2>
       <div class="charts">${chart('CPU 使用率',HIST.cpu,'%','#30bcb0',100)}${chart('内存使用率',HIST.mem,'%','#8957e5',100)}${chart('系统负载 1m',HIST.load,'','#d29922',null)}</div></section>`;
   }
-  document.getElementById('view').innerHTML=sys+charts+secs+'<div id="pwall"></div>';
+  document.getElementById('view').innerHTML=mcPanel(DATA.mc||{})+sys+charts+'<div id="pwall"></div>';
   renderPwall(DATA.mc_players,DATA.mc_perf);
+}
+function mcTile(k,v,col){return `<div class="mctile"><div class="k">${k}</div><div class="v" style="${col?'color:'+col:''}">${esc(String(v))}</div></div>`}
+function mcPanel(m){
+  const onl=!!m.online;
+  const tcol=(m.tps==null)?'var(--tx2)':tpsColor(m.tps);
+  return `<section class="sec full"><h2><span class="bar2"></span>Minecraft 服务器<a class="histbtn" style="margin-left:auto;font-size:12px" onclick="location.hash='#/s/mc'">详情 / 日志 ›</a></h2>
+    <div class="mcrow">
+      ${mcTile('状态',onl?'在线':'离线',onl?'var(--grn)':'var(--red)')}
+      ${mcTile('在线人数',m.players||'-')}
+      ${mcTile('TPS',(m.tps==null?'-':m.tps),tcol)}
+      ${mcTile('MSPT',(m.mspt==null?'-':m.mspt+' ms'))}
+      ${mcTile('已占用内存',m.mem||'-')}
+      ${mcTile('运行时长',m.uptime||'-')}
+      ${mcTile('难度',m.difficulty||'-')}
+      ${mcTile('视距',m.viewdist||'-')}
+      ${mcTile('验证',m.onlinemode==='false'?'离线':'正版')}
+      ${mcTile('版本',m.version||'Paper 1.21.10')}
+      ${mcTile('隧道',m.tunnel?'正常':'断开',m.tunnel?'var(--grn)':'var(--red)')}
+      ${mcTile('连接地址',m.connect||'-')}
+    </div></section>`;
 }
 function pcols(n){return n<=1?1:n<=2?2:n<=3?3:n<=8?4:n<=15?5:6}
 function armorMat(it){
