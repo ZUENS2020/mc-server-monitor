@@ -12,7 +12,9 @@
 - **服务详情页** —— 指标卡 + **实时日志终端**(来源自动选:`docker logs` / `journalctl --user` / `journalctl`(系统)/ Minecraft `latest.log`),日志按级别高亮。
 - **主动预警** —— 阈值规则(磁盘/内存/Swap/CPU 持续/负载/容器异常)+ 连通性探测(直连外网 `cloudflare.com`、代理出口 `gstatic/generate_204`、MC 隧道 TCP)。告警条 + 浏览器标签标题提示。
 - **预警自动备份** —— 当内存/Swap/CPU/负载/MC 停止等预警触发时,调用 Crafty 备份接口做一次世界存档(3 小时冷却,磁盘/连通性告警不触发)。
-- **Minecraft 玩家墙** —— 通过 **RCON**(`list` + `data get entity`)实时读取每个在线玩家的 血量 / 饱食 / 坐标 / 维度 / 经验 / 模式,带皮肤头像;卡片列数随人数自适应;左侧竖条按状态变色(正常绿 / 危险黄 / 死亡红闪烁)。在线人数通过 Server List Ping 获取。
+- **Minecraft 玩家墙** —— 通过 **RCON**(`list` + `data get entity`)实时读取每个在线玩家的 血量 / 饱食 / 坐标 / 维度 / 经验 / 模式 / 四件护甲等级,带皮肤头像;卡片列数随人数自适应;左侧竖条按状态变色(正常绿 / 危险黄(血或饱食<一半)/ 死亡红闪烁)。在线人数通过 Server List Ping 获取。
+- **TPS / MSPT 监控** —— RCON 读服务器 `tps`/`mspt`,玩家墙顶部显示(TPS 按健康度变色),TPS 偏低接入预警。
+- **作弊 / 异常检测** —— 读 CoreProtect 数据库统计每玩家**方块放置速率**(排除 `#` 自然源),爆发式放置(疑似打印机 / 自动搭建)在卡上亮黄/红并预警;解析 **GrimAC** 控制台日志,移动类作弊(fly/speed/Baritone)违规同步到预警。需服务器装 CoreProtect + GrimAC 插件。
 
 ## 技术
 

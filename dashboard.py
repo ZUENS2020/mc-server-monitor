@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """NEC 服务聚合监控面板 v3 — Crafty 风格 / 全直角 / 整机总览 / 日志高亮。纯标准库。"""
-import glob, json, os, re, shutil, socket, ssl, struct, subprocess, threading, time
+import glob, json, os, re, shutil, socket, sqlite3, ssl, struct, subprocess, threading, time
 import urllib.parse, urllib.request, urllib.error
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -303,6 +303,9 @@ def mc_players_detail():
         players.append({"name": n, "hp": hp, "pos": coord,
                         "dim": _DIM.get(dim, dim or "-"), "food": food, "xp": xp,
                         "mode": mode, "armor": armor})
+    sec = security_snapshot()
+    for p in players:
+        p["place"] = sec["places"].get(p["name"], 0)
     return players
 
 
@@ -488,6 +491,15 @@ def build_alerts(items, sysd):
             add("critical", "tps", "MC 服务器严重卡顿,TPS %.1f(正常 20)" % t)
         elif t < 18:
             add("warning", "tps", "MC 服务器 TPS 偏低 %.1f(正常 20)" % t)
+    sec = security_snapshot()
+    for name, rate in sec["places"].items():
+        if rate >= 500:
+            add("critical", "place_" + name, "%s 放置 %d 块/分,高度疑似自动搭建/打印机" % (name, rate))
+        elif rate >= 200:
+            add("warning", "place_" + name, "%s 放置 %d 块/分,疑似自动搭建" % (name, rate))
+    for f in sec["grim"]:
+        add("warning", "grim_%s_%s" % (f["player"], f["check"]),
+            "GrimAC:%s 触发 %s (x%d)" % (f["player"], f["check"], f["vl"]))
     for it in items:
         if it["level"] == "down":
             add("critical", "svc_" + it["id"], "%s 已停止运行" % it["name"])
@@ -605,6 +617,62 @@ def mc_perf_cached():
         return _perfcache["data"]
 
 
+# ---------- 安全检测:放置速率(CoreProtect)+ Grim 违规 ----------
+_seccache = {"t": 0, "data": None}
+_seclock = threading.Lock()
+
+
+def cp_db():
+    g = glob.glob(os.path.expanduser("~/crafty/servers/*/plugins/CoreProtect/*.db"))
+    return g[0] if g else ""
+
+
+def grim_flags():
+    if not MC_LOG or not os.path.exists(MC_LOG):
+        return []
+    try:
+        with open(MC_LOG, errors="replace") as f:
+            lines = f.readlines()[-300:]
+    except Exception:
+        return []
+    t = time.localtime()
+    nowsec = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
+    seen = {}
+    for ln in lines:
+        s = re.sub("§.", "", ln)
+        m = re.search(r"\[(\d\d):(\d\d):(\d\d)\].*?(\w+) failed (\w[\w/]*) \(x(\d+)\)", s)
+        if not m:
+            continue
+        h, mi, se, player, check, vl = m.groups()
+        ts = int(h) * 3600 + int(mi) * 60 + int(se)
+        if 0 <= nowsec - ts <= 180:   # 近 3 分钟
+            seen[(player, check)] = {"player": player, "check": check, "vl": int(vl)}
+    return list(seen.values())
+
+
+def security_snapshot():
+    with _seclock:
+        if _seccache["t"] and time.time() - _seccache["t"] < 5:
+            return _seccache["data"]
+        places = {}
+        db = cp_db()
+        if db:
+            try:
+                c = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
+                cut = int(time.time()) - 60
+                for name, cnt in c.execute(
+                        "select u.user,count(*) from co_block b join co_user u on b.user=u.id "
+                        "where b.action=1 and b.time>? and u.user not like '#%' group by b.user", (cut,)):
+                    places[name] = cnt
+                c.close()
+            except Exception:
+                pass
+        out = {"places": places, "grim": grim_flags()}
+        _seccache["data"] = out
+        _seccache["t"] = time.time()
+        return out
+
+
 def collect():
     ps, stats = docker_ps(), docker_stats()
     items = {sid: eval_item(sid, ps, stats) for sid in ORDER}
@@ -700,6 +768,10 @@ def detail(sid):
            "has_log": svc["log"][0] != "none"}
     if sid == "mc":
         out["players"] = mc_players_detail()
+        sec = security_snapshot()
+        out["security"] = {
+            "places": sorted([[k, v] for k, v in sec["places"].items()], key=lambda x: -x[1])[:8],
+            "grim": sec["grim"]}
     return out
 
 
@@ -892,6 +964,7 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .ptab tbody tr:hover td{background:var(--panel)}
 .ptab .mono{font-family:"SF Mono",Consolas,monospace;color:var(--tx2)}
 .phint{color:var(--tx3);font-size:13px;padding:14px;border:1px dashed var(--bd);background:var(--panel);margin-top:16px}
+.gflag{margin-top:10px;padding:9px 13px;font-size:13px;color:#ff9a93;background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.3);font-weight:600}
 /* 首页玩家墙 */
 .psec-home{margin-top:18px}
 .pcards{display:grid;gap:12px}
@@ -901,6 +974,9 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .pav{width:46px;height:46px;flex:0 0 auto;image-rendering:pixelated;background:#0e131a;border:1px solid var(--bd)}
 .pinfo{flex:1;min-width:0}
 .pname{font-size:15px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pflag{font-size:10px;font-weight:700;padding:1px 5px;margin-left:auto;flex:0 0 auto}
+.pflag.w{background:rgba(210,153,34,.18);color:#e3b341}
+.pflag.c{background:rgba(248,81,73,.2);color:#ff7b72}
 .pmode{font-size:11px;color:var(--tx3);border:1px solid var(--bd);padding:1px 7px;font-weight:400;flex:0 0 auto}
 .pbar{position:relative;height:14px;background:#0c1016;border:1px solid var(--bd);margin-bottom:4px;overflow:hidden}
 .pbar i{display:block;height:100%;transition:width .5s}
@@ -1025,10 +1101,12 @@ function pcard(p){
   const fn=parseInt(p.food),fvalid=!isNaN(fn),food=fvalid?fn:0;
   const cls=!valid?'':hp<=0?'dead':((hp<10)||(fvalid&&fn<10))?'danger':'';
   const nm=encodeURIComponent(p.name);
+  const pl=p.place||0;
+  const pbadge=pl>=500?`<span class="pflag c">▲${pl}/m</span>`:pl>=200?`<span class="pflag w">▲${pl}/m</span>`:'';
   return `<div class="pcard ${cls}">
     <img class="pav" src="https://minotar.net/helm/${nm}/56.png" onerror="this.onerror=null;this.src='https://minotar.net/helm/MHF_Steve/56.png'">
     <div class="pinfo">
-      <div class="pname">${esc(p.name)}<span class="pmode">${esc(p.mode)}</span></div>
+      <div class="pname">${esc(p.name)}<span class="pmode">${esc(p.mode)}</span>${pbadge}</div>
       <div class="pbar hp"><i style="width:${Math.max(0,Math.min(100,hp/20*100))}%"></i><span>HP ${hp} / 20</span></div>
       <div class="pbar food"><i style="width:${Math.max(0,Math.min(100,food/20*100))}%"></i><span>FOOD ${food} / 20</span></div>
       <div class="pmeta"><span class="pcoord">${esc(p.dim)} · Lv.${esc(String(p.xp))} · ${esc(p.pos)}</span><span class="parmor">${(p.armor||[null,null,null,null]).map(it=>{const m=armorMat(it);return `<span class="aslot" style="background:${m.bg};color:${m.fg}">${m.l}</span>`}).join('')}</span></div>
@@ -1086,6 +1164,7 @@ async function detailView(id){
         <span style="color:var(--tx3);font-size:13px">${d.sub||''}</span></div>
         <div class="tiles" id="tiles"></div>
         <div id="players"></div>
+        <div id="secsec"></div>
         ${d.has_log?`<div class="logwrap"><div class="logbar"><div class="left"><span class="live"></span>实时日志</div>
         <div class="right"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="auto" checked>自动滚动</label>
         <a onclick="var l=document.getElementById('log');l.scrollTop=l.scrollHeight">↓ 底部</a></div></div>
@@ -1101,6 +1180,16 @@ async function detailView(id){
         <thead><tr><th>玩家</th><th>血量</th><th>维度</th><th>坐标 (X Y Z)</th><th>饥饿</th><th>经验</th><th>模式</th></tr></thead>
         <tbody>${d.players.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.hp} / 20</td><td>${esc(p.dim)}</td><td class="mono">${esc(p.pos)}</td><td>${p.food} / 20</td><td>Lv.${p.xp}</td><td>${esc(p.mode)}</td></tr>`).join('')}</tbody></table></div>`;
     }
+    const se=document.getElementById('secsec');
+    if(se&&d.security){
+      const pls=d.security.places||[],gr=d.security.grim||[];
+      let h='<div class="psec"><h3>安全检测 · 放置速率(近1分钟) / GrimAC 违规</h3>';
+      if(pls.length){h+='<table class="ptab"><thead><tr><th>玩家</th><th>放置 / 分钟</th></tr></thead><tbody>'+pls.map(r=>`<tr><td>${esc(r[0])}</td><td style="color:${r[1]>=500?'#ff7b72':r[1]>=200?'#e3b341':'#bcc6d2'};font-weight:600">${r[1]}</td></tr>`).join('')+'</tbody></table>';}
+      else h+='<div class="phint">近 1 分钟无方块放置记录</div>';
+      h+=gr.length?('<div class="gflag">GrimAC 违规:'+gr.map(f=>`${esc(f.player)} → ${esc(f.check)} (x${f.vl})`).join(' · ')+'</div>'):'<div class="phint" style="margin-top:8px">GrimAC:近 3 分钟无违规</div>';
+      h+='</div>';
+      se.innerHTML=h;
+    } else if(se){se.innerHTML='';}
     return d;
   }
   async function logs(){
