@@ -1,0 +1,14 @@
+# 与 MC/Crafty/RCON 同机部署时的 compose 覆盖示例
+# 用法: docker compose -f docker-compose.yml -f docker-compose.host.example.yml up -d --build
+#
+# 建议复制为本地 docker-compose.override.yml 并按路径修改:
+#   HOST_DATA_DIR=~/dashboard/data HOST_CRAFTY_DIR=~/crafty docker compose ...
+services:
+  dashboard:
+    network_mode: host
+    pid: host
+    ports: !reset []
+    volumes:
+      - ${HOST_DATA_DIR:-./data}:/data
+      - ${HOST_CRAFTY_DIR:-./crafty}:/crafty:ro
+      - ${HOST_PCP_DIR:-/var/log/pcp/pmlogger}:/var/log/pcp/pmlogger:ro

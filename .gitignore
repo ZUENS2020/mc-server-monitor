@@ -1,4 +1,5 @@
 # 运行时/敏感文件(本仓库本就不含密钥,这里再兜底)
+.DS_Store
 *.log
 __pycache__/
 *.pyc
@@ -7,3 +8,6 @@ server.properties
 *.bak
 .env
 data/
+项目完整文档.md
+docker-compose.nec.yml
+docker-compose.override.yml

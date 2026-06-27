@@ -1,12 +1,12 @@
 [Unit]
-Description=NEC Service Monitor Dashboard
+Description=Minecraft Server Monitor Dashboard
 After=network.target docker.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/zuens2020/dashboard
-EnvironmentFile=-/home/zuens2020/dashboard/.env
-ExecStart=/usr/bin/python3 /home/zuens2020/dashboard/dashboard.py
+WorkingDirectory=%h/dashboard
+EnvironmentFile=-%h/dashboard/.env
+ExecStart=/usr/bin/python3 %h/dashboard/dashboard.py
 Restart=always
 RestartSec=5
 
