@@ -1554,8 +1554,7 @@ function renderChrome(){
   if(warn)ph+=`<span class="pill warn"><span class="d"></span>${warn} 警告</span>`;
   if(!ph)ph=`<span class="pill up"><span class="d"></span>运行正常</span>`;
   document.getElementById('pills').innerHTML=ph;
-  const sy=DATA.sys||{}, mc=DATA.mc||{};
-  document.getElementById('sysmeta').textContent=`服务器 ${sy.uptime||'-'} · MC ${mc.uptime||'-'}`;
+  document.getElementById('sysmeta').textContent=`服务器 ${(DATA.sys||{}).uptime||'-'}`;
   const al=DATA.alerts||[],ab=document.getElementById('alertbar');
   if(ab){
     if(al.length){ab.style.display='block';ab.innerHTML=al.map(a=>
