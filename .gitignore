@@ -5,3 +5,5 @@ __pycache__/
 default-creds.txt
 server.properties
 *.bak
+.env
+data/

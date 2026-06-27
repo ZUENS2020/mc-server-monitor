@@ -5,6 +5,7 @@ After=network.target docker.service
 [Service]
 Type=simple
 WorkingDirectory=/home/zuens2020/dashboard
+EnvironmentFile=-/home/zuens2020/dashboard/.env
 ExecStart=/usr/bin/python3 /home/zuens2020/dashboard/dashboard.py
 Restart=always
 RestartSec=5

@@ -1,31 +1,163 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""NEC 服务聚合监控面板 v3 — Crafty 风格 / 全直角 / 整机总览 / 日志高亮。纯标准库。"""
+"""Minecraft 服务器监控面板 — Crafty 风格 / 全直角 / 可配置 / Docker 就绪。纯标准库。"""
 import glob, json, os, re, shutil, socket, sqlite3, ssl, struct, subprocess, threading, time
 import urllib.parse, urllib.request, urllib.error
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PORT = 8765
-REFRESH = 5
+
+def _env(key, default=""):
+    return os.environ.get(key, default).strip()
+
+
+def _env_bool(key, default=True):
+    v = _env(key, str(default).lower())
+    return v.lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(key, default):
+    try:
+        return int(_env(key, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_auto(key, default=True):
+    v = _env(key, "auto").lower()
+    if v == "auto":
+        return None
+    return v in ("1", "true", "yes", "on")
+
+
+def _expand(path):
+    return os.path.expanduser(path) if path else ""
+
+
+def load_config():
+    data_dir = _expand(_env("DATA_DIR", "/data"))
+    crafty_data = _expand(_env("CRAFTY_DATA_DIR", os.path.join(os.path.expanduser("~"), "crafty")))
+    alert_log = _expand(_env("ALERT_LOG_PATH", "")) or os.path.join(data_dir, "alerts.log")
+    creds_file = _expand(_env("CRAFTY_CREDS_FILE", "")) or os.path.join(crafty_data, "config", "default-creds.txt")
+    return {
+        "port": _env_int("DASHBOARD_PORT", 8765),
+        "refresh": _env_int("DASHBOARD_REFRESH", 5),
+        "title": _env("DASHBOARD_TITLE", "MC 监控"),
+        "data_dir": data_dir,
+        "crafty_data_dir": crafty_data,
+        "crafty_url": _env("CRAFTY_URL", "https://127.0.0.1:8443").rstrip("/"),
+        "crafty_user": _env("CRAFTY_USERNAME", "admin"),
+        "crafty_password": _env("CRAFTY_PASSWORD", ""),
+        "crafty_creds_file": creds_file,
+        "crafty_server_id": _env("CRAFTY_SERVER_ID", ""),
+        "crafty_tls_verify": _env_bool("CRAFTY_TLS_VERIFY", False),
+        "mc_host": _env("MC_HOST", "127.0.0.1"),
+        "mc_rcon_host": _env("MC_RCON_HOST", "") or _env("MC_HOST", "127.0.0.1"),
+        "mc_port": _env_int("MC_PORT", 25565),
+        "mc_connect": _env("MC_CONNECT_ADDRESS", ""),
+        "mc_service_name": _env("MC_SERVICE_NAME", "MC 服务器"),
+        "mc_version_label": _env("MC_VERSION_LABEL", "Paper"),
+        "tunnel_enabled": _env_bool("TUNNEL_ENABLED", True),
+        "tunnel_name": _env("TUNNEL_NAME", "frpc 隧道"),
+        "tunnel_host": _env("TUNNEL_HOST", "frp-top.com"),
+        "tunnel_port": _env_int("TUNNEL_PORT", 18650),
+        "tunnel_check": _env("TUNNEL_CHECK", "auto").lower(),  # auto | systemd | tcp | none
+        "tunnel_systemd_unit": _env("TUNNEL_SYSTEMD_UNIT", "frpc"),
+        "enable_host_metrics": _env_bool("ENABLE_HOST_METRICS", True),
+        "enable_pcp": _env_auto("ENABLE_PCP", True),
+        "enable_coreprotect": _env_auto("ENABLE_COREPROTECT", True),
+        "enable_grimac": _env_auto("ENABLE_GRIMAC", True),
+        "enable_rcon": _env_auto("ENABLE_RCON", True),
+        "enable_crafty_backup": _env_bool("ENABLE_CRAFTY_BACKUP", True),
+        "enable_connectivity_probe": _env_bool("ENABLE_CONNECTIVITY_PROBE", True),
+        "enable_systemd_logs": _env_bool("ENABLE_SYSTEMD_LOGS", True),
+        "pcp_log_dir": _expand(_env("PCP_LOG_DIR", "/var/log/pcp/pmlogger")),
+        "proc_root": _expand(_env("PROC_ROOT", "/proc")),
+        "alert_log": alert_log,
+        "backup_cooldown": _env_int("BACKUP_COOLDOWN_HOURS", 3) * 3600,
+        "probe_direct_url": _env("PROBE_DIRECT_URL", "https://www.cloudflare.com"),
+        "probe_proxy_url": _env("PROBE_PROXY_URL", "https://www.gstatic.com/generate_204"),
+    }
+
+
+CFG = load_config()
+PORT = CFG["port"]
+REFRESH = CFG["refresh"]
 
 ENV = dict(os.environ)
-ENV.setdefault("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+if os.getuid() != 0:
+    ENV.setdefault("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+
+_SSL = ssl.create_default_context()
+if not CFG["crafty_tls_verify"]:
+    _SSL.check_hostname = False
+    _SSL.verify_mode = ssl.CERT_NONE
 
 
-def _mc_log():
-    g = sorted(glob.glob(os.path.expanduser("~/crafty/servers/*/logs/latest.log")),
-               key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
-    return g[0] if g else ""
+def _proc(path):
+    root = CFG["proc_root"] or "/proc"
+    return os.path.join(root, path.lstrip("/"))
 
 
-MC_LOG = _mc_log()
+def server_dir():
+    if CFG["crafty_server_id"]:
+        return os.path.join(CFG["crafty_data_dir"], "servers", CFG["crafty_server_id"])
+    g = sorted(glob.glob(os.path.join(CFG["crafty_data_dir"], "servers", "*", "")),
+               key=os.path.getmtime, reverse=True)
+    return g[0].rstrip("/") if g else ""
 
-SERVICES = {
-    "mc":   {"name": "MC 服务器",   "group": "Minecraft", "kind": "port",    "port": 25565, "sub": "Paper 1.21.10 · 25565", "log": ("file", MC_LOG)},
-    "frpc": {"name": "frpc 樱花穿透", "group": "Minecraft", "kind": "systemd", "unit": "frpc", "sub": "frp-top.com:18650", "log": ("journal_user", "frpc")},
-}
-ORDER = ["mc", "frpc"]
+
+def crafty_sid():
+    if CFG["crafty_server_id"]:
+        return CFG["crafty_server_id"]
+    d = server_dir()
+    return os.path.basename(d) if d else ""
+
+
+def mc_log_path():
+    d = server_dir()
+    if not d:
+        return ""
+    p = os.path.join(d, "logs", "latest.log")
+    return p if os.path.exists(p) else ""
+
+
+def _tunnel_check_mode():
+    mode = CFG["tunnel_check"]
+    if mode == "auto":
+        return "systemd" if CFG["enable_systemd_logs"] and shutil.which("systemctl") else "tcp"
+    return mode
+
+
+def _tunnel_sub():
+    addr = CFG["mc_connect"] or "%s:%d" % (CFG["tunnel_host"], CFG["tunnel_port"])
+    return addr
+
+
+def build_services():
+    mc_log = mc_log_path()
+    mc_sub = "%s · %d" % (CFG["mc_version_label"], CFG["mc_port"])
+    svcs = {
+        "mc": {"name": CFG["mc_service_name"], "group": "Minecraft", "kind": "port",
+               "host": CFG["mc_host"], "port": CFG["mc_port"], "sub": mc_sub,
+               "log": ("file", mc_log) if mc_log else ("none", "")},
+    }
+    if CFG["tunnel_enabled"]:
+        tmode = _tunnel_check_mode()
+        if tmode == "systemd":
+            unit = CFG["tunnel_systemd_unit"]
+            log = ("journal_user", unit) if CFG["enable_systemd_logs"] else ("none", "")
+            svcs["frpc"] = {"name": CFG["tunnel_name"], "group": "Minecraft", "kind": "systemd",
+                            "unit": unit, "sub": _tunnel_sub(), "log": log}
+        elif tmode == "tcp":
+            svcs["frpc"] = {"name": CFG["tunnel_name"], "group": "Minecraft", "kind": "remote_tcp",
+                            "host": CFG["tunnel_host"], "port": CFG["tunnel_port"],
+                            "sub": _tunnel_sub(), "log": ("none", "")}
+    return svcs
+
+
+SERVICES = build_services()
+ORDER = list(SERVICES.keys())
 GROUP_ORDER = ["Minecraft"]
 
 _lock = threading.Lock()
@@ -187,7 +319,7 @@ def mc_status(host="127.0.0.1", port=25565, timeout=2):
 
 # ---------- RCON:读每个玩家实时状态 ----------
 def mc_props():
-    p = os.path.expanduser("~/crafty/servers/%s/server.properties" % crafty_sid())
+    p = os.path.join(server_dir(), "server.properties")
     d = {}
     try:
         for line in open(p):
@@ -227,7 +359,8 @@ def _rcon_open(host, port, password, timeout):
     return s
 
 
-def rcon_exec(cmds, port, password, host="127.0.0.1", timeout=3):
+def rcon_exec(cmds, port, password, host=None, timeout=3):
+    host = host or CFG["mc_rcon_host"]
     # 持久连接:开一次反复用,断了才重连 —— 避免每次都连/断刷爆服务器日志
     with _rconlock:
         for _ in range(2):
@@ -260,7 +393,11 @@ def _after(s):
 
 
 def mc_players_detail():
+    if CFG["enable_rcon"] is False:
+        return None
     props = mc_props()
+    if CFG["enable_rcon"] is None and not os.path.exists(os.path.join(server_dir(), "server.properties")):
+        return None
     if props.get("enable-rcon", "") != "true":
         return None
     pw = props.get("rcon.password", "")
@@ -317,14 +454,14 @@ def mc_players_detail():
 
 
 def read_cpu():
-    with open("/proc/stat") as f:
+    with open(_proc("stat")) as f:
         v = list(map(int, f.readline().split()[1:]))
     return sum(v), v[3] + v[4]
 
 
 def read_net():
     rx = tx = 0
-    with open("/proc/net/dev") as f:
+    with open(_proc("net/dev")) as f:
         for line in f.readlines()[2:]:
             name, data = line.split(":")
             if name.strip() in ("lo",) or name.strip().startswith(("docker", "br-", "veth", "Meta")):
@@ -335,6 +472,8 @@ def read_net():
 
 
 def sysstat():
+    if not CFG["enable_host_metrics"]:
+        return {}
     now = time.time()
     total, idle = read_cpu()
     cpu = 0.0
@@ -344,7 +483,7 @@ def sysstat():
             cpu = round((1 - di / dt) * 100, 1)
     _prev["cpu"] = (total, idle)
     mem = {}
-    with open("/proc/meminfo") as f:
+    with open(_proc("meminfo")) as f:
         for line in f:
             k, _, v = line.partition(":")
             mem[k] = int(v.strip().split()[0])
@@ -361,9 +500,9 @@ def sysstat():
             rxr = max(0, (rx - _prev["net"][0]) / dtt)
             txr = max(0, (tx - _prev["net"][1]) / dtt)
     _prev["net"], _prev["t"] = (rx, tx), now
-    with open("/proc/loadavg") as f:
+    with open(_proc("loadavg")) as f:
         la = f.read().split()[:3]
-    with open("/proc/uptime") as f:
+    with open(_proc("uptime")) as f:
         up = float(f.read().split()[0])
     return {"cpu": cpu, "ncpu": os.cpu_count(),
             "mem_used": round(mt - ma, 1), "mem_total": round(mt, 1),
@@ -385,13 +524,20 @@ def eval_item(sid, ps, stats):
         ok = bool(pid_of(svc))
         level, detail = ("up", "running") if ok else ("down", "not found")
     elif k == "port":
-        st = mc_status("127.0.0.1", svc["port"])
+        host = svc.get("host", "127.0.0.1")
+        st = mc_status(host, svc["port"])
         if st:
             level, detail = "up", "在线 %d / %d" % (st["online"], st["max"])
-        elif tcp_open(svc["port"]):
+        elif tcp_open(svc["port"], host):
             level, detail = "up", "监听中(启动中)"
         else:
             level, detail = "down", "无连接"
+    elif k == "remote_tcp":
+        host, port = svc.get("host", "127.0.0.1"), svc["port"]
+        if tcp_open(port, host, 3):
+            level, detail = "up", "%s:%d 可达" % (host, port)
+        else:
+            level, detail = "down", "%s:%d 不可达" % (host, port)
     elif k == "container":
         c = ps.get(svc["container"])
         if not c:
@@ -420,6 +566,10 @@ _alert_since = {}
 
 
 def do_probe():
+    if not CFG["enable_connectivity_probe"]:
+        _probe.update(direct=True, proxy=True, frp=True)
+        return
+
     def http(url):
         try:
             urllib.request.urlopen(url, timeout=6)
@@ -428,9 +578,12 @@ def do_probe():
             return True
         except Exception:
             return False
-    _probe["direct"] = http("https://www.cloudflare.com")          # 直连(ISP)
-    _probe["proxy"] = http("https://www.gstatic.com/generate_204")  # 代理出口(mihomo 同款健康检查)
-    _probe["frp"] = tcp_open(18650, "frp-top.com", 3)    # MC 隧道
+    _probe["direct"] = http(CFG["probe_direct_url"])
+    _probe["proxy"] = http(CFG["probe_proxy_url"])
+    if CFG["tunnel_enabled"]:
+        _probe["frp"] = tcp_open(CFG["tunnel_port"], CFG["tunnel_host"], 3)
+    else:
+        _probe["frp"] = True
 
 
 def prober_loop():
@@ -485,8 +638,9 @@ def build_alerts(items, sysd):
             add("warning", "load", "系统负载过高 %.2f(共 %d 核)" % (l1, NCPU))
     except Exception:
         pass
-    if not _probe["frp"]:
-        add("critical", "frp", "MC 隧道 frp-top.com:18650 不可达,朋友可能无法连入服务器")
+    if CFG["tunnel_enabled"] and not _probe["frp"]:
+        addr = CFG["mc_connect"] or "%s:%d" % (CFG["tunnel_host"], CFG["tunnel_port"])
+        add("critical", "frp", "MC 隧道 %s 不可达,朋友可能无法连入服务器" % addr)
     if not _probe["direct"]:
         add("critical", "net", "外网直连中断,疑似网络 / ISP 异常")
     perf = mc_perf_cached()
@@ -518,28 +672,29 @@ def build_alerts(items, sysd):
 
 
 # ---------- 预警自动备份 ----------
-CRAFTY_CRED = os.path.expanduser("~/crafty/config/default-creds.txt")
-BACKUP_TRIGGER = ("mem", "swap", "cpu", "load", "svc_mc")  # 这些预警触发备份
-BACKUP_COOLDOWN = 3 * 3600
+BACKUP_TRIGGER = ("mem", "swap", "cpu", "load", "svc_mc")
 _backup = {"last": 0, "token": "", "token_t": 0}
-_SSL = ssl.create_default_context()
-_SSL.check_hostname = False
-_SSL.verify_mode = ssl.CERT_NONE
 
 
-def crafty_sid():
-    d = sorted(glob.glob(os.path.expanduser("~/crafty/servers/*/")), key=os.path.getmtime, reverse=True)
-    return os.path.basename(d[0].rstrip("/")) if d else ""
+def crafty_password():
+    if CFG["crafty_password"]:
+        return CFG["crafty_password"]
+    try:
+        return json.load(open(CFG["crafty_creds_file"]))["password"]
+    except Exception:
+        return ""
 
 
 def crafty_token():
     now = time.time()
     if _backup["token"] and now - _backup["token_t"] < 1800:
         return _backup["token"]
+    pw = crafty_password()
+    if not pw:
+        return ""
     try:
-        pw = json.load(open(CRAFTY_CRED))["password"]
-        req = urllib.request.Request("https://127.0.0.1:8443/api/v2/auth/login",
-                                     data=json.dumps({"username": "admin", "password": pw}).encode(),
+        req = urllib.request.Request("%s/api/v2/auth/login" % CFG["crafty_url"],
+                                     data=json.dumps({"username": CFG["crafty_user"], "password": pw}).encode(),
                                      headers={"Content-Type": "application/json"})
         tok = json.load(urllib.request.urlopen(req, timeout=8, context=_SSL))["data"]["token"]
         _backup.update(token=tok, token_t=now)
@@ -549,11 +704,13 @@ def crafty_token():
 
 
 def crafty_backup():
+    if not CFG["enable_crafty_backup"]:
+        return
     sid, tok = crafty_sid(), crafty_token()
     if not sid or not tok:
         return
     try:
-        req = urllib.request.Request("https://127.0.0.1:8443/api/v2/servers/%s/action/backup_server" % sid,
+        req = urllib.request.Request("%s/api/v2/servers/%s/action/backup_server" % (CFG["crafty_url"], sid),
                                      data=b"", method="POST", headers={"Authorization": "Bearer " + tok})
         urllib.request.urlopen(req, timeout=20, context=_SSL)
     except Exception:
@@ -561,9 +718,11 @@ def crafty_backup():
 
 
 def do_alert_backup(alerts):
+    if not CFG["enable_crafty_backup"]:
+        return
     now = time.time()
     keys = {a["key"] for a in alerts}
-    if any(k in keys for k in BACKUP_TRIGGER) and now - _backup["last"] >= BACKUP_COOLDOWN:
+    if any(k in keys for k in BACKUP_TRIGGER) and now - _backup["last"] >= CFG["backup_cooldown"]:
         _backup["last"] = now
         threading.Thread(target=crafty_backup, daemon=True).start()
 
@@ -587,7 +746,11 @@ _perflock = threading.Lock()
 
 
 def mc_perf():
+    if CFG["enable_rcon"] is False:
+        return None
     props = mc_props()
+    if CFG["enable_rcon"] is None and not props:
+        return None
     if props.get("enable-rcon", "") != "true":
         return None
     pw = props.get("rcon.password", "")
@@ -630,7 +793,7 @@ def mc_info():
     with _mcilock:
         if _mcinfo["t"] and time.time() - _mcinfo["t"] < 5:
             return _mcinfo["data"]
-        st = mc_status()
+        st = mc_status(CFG["mc_host"], CFG["mc_port"])
         perf = mc_perf_cached()
         props = mc_props()
         mem = uptime = "-"
@@ -646,16 +809,24 @@ def mc_info():
                     mem = ("%.2f / %.1f GiB" % (rss_g, xmx_g)) if xmx_g else ("%.2f GiB" % rss_g)
         except Exception:
             pass
-        d = {"online": bool(st) or tcp_open(25565),
+        connect = CFG["mc_connect"] or ("%s:%d" % (CFG["tunnel_host"], CFG["tunnel_port"]) if CFG["tunnel_enabled"] else "%s:%d" % (CFG["mc_host"], CFG["mc_port"]))
+        tunnel_up = False
+        if CFG["tunnel_enabled"]:
+            tmode = _tunnel_check_mode()
+            if tmode == "systemd":
+                tunnel_up = systemd_active(CFG["tunnel_systemd_unit"])
+            elif tmode == "tcp":
+                tunnel_up = tcp_open(CFG["tunnel_port"], CFG["tunnel_host"], 3)
+        d = {"online": bool(st) or tcp_open(CFG["mc_port"], CFG["mc_host"]),
              "players": ("%d / %d" % (st["online"], st["max"])) if st else "-",
              "tps": perf["tps_1m"] if perf else None,
              "mspt": perf["mspt_avg"] if perf else None,
-             "version": (st.get("version") if st and st.get("version") else "Paper 1.21.10"),
+             "version": (st.get("version") if st and st.get("version") else CFG["mc_version_label"]),
              "difficulty": props.get("difficulty", "-"),
              "viewdist": props.get("view-distance", "-"),
              "mem": mem, "uptime": uptime,
-             "connect": "frp-top.com:18650",
-             "tunnel": systemd_active("frpc"),
+             "connect": connect,
+             "tunnel": tunnel_up if CFG["tunnel_enabled"] else None,
              "onlinemode": props.get("online-mode", "true"),
              "motd": (st.get("motd") if st else "") or ""}
         _mcinfo["data"] = d
@@ -669,15 +840,21 @@ _seclock = threading.Lock()
 
 
 def cp_db():
-    g = glob.glob(os.path.expanduser("~/crafty/servers/*/plugins/CoreProtect/*.db"))
+    d = server_dir()
+    if not d:
+        return ""
+    g = glob.glob(os.path.join(d, "plugins", "CoreProtect", "*.db"))
     return g[0] if g else ""
 
 
 def grim_flags():
-    if not MC_LOG or not os.path.exists(MC_LOG):
+    if CFG["enable_grimac"] is False:
+        return []
+    log = mc_log_path()
+    if not log or not os.path.exists(log):
         return []
     try:
-        with open(MC_LOG, errors="replace") as f:
+        with open(log, errors="replace") as f:
             lines = f.readlines()[-300:]
     except Exception:
         return []
@@ -701,8 +878,11 @@ def security_snapshot():
         if _seccache["t"] and time.time() - _seccache["t"] < 5:
             return _seccache["data"]
         places = {}
-        db = cp_db()
-        if db:
+        use_cp = CFG["enable_coreprotect"] is not False
+        db = cp_db() if use_cp else ""
+        if use_cp and CFG["enable_coreprotect"] is None and not db:
+            use_cp = False
+        if use_cp and db:
             try:
                 c = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
                 cut = int(time.time()) - 60
@@ -719,7 +899,7 @@ def security_snapshot():
         return out
 
 
-ALERT_LOG = os.path.expanduser("~/dashboard/alerts.log")
+ALERT_LOG = CFG["alert_log"]
 _alertlogged = {}   # 当前活跃且已记录的告警 key -> message
 
 
@@ -831,7 +1011,8 @@ def detail(sid):
                  ("CPU", info.get("cpu", "-")), ("内存", info.get("mem", "-")),
                  ("类型", "systemd 用户服务" if k == "systemd" else "系统进程")]
     elif k == "port":
-        st = mc_status("127.0.0.1", svc["port"])
+        host = svc.get("host", CFG["mc_host"])
+        st = mc_status(host, svc["port"])
         tiles = [("状态", base["detail"]), ("端口", str(svc["port"]))]
         perf = mc_perf_cached()
         if perf:
@@ -846,7 +1027,7 @@ def detail(sid):
                       ("在线玩家", ", ".join(st.get("names") or []) or "(无)"),
                       ("MOTD", st.get("motd") or "-")]
         else:
-            tiles += [("类型", "Minecraft Java"), ("核心", "Paper 1.21.10")]
+            tiles += [("类型", "Minecraft Java"), ("核心", CFG["mc_version_label"])]
     out = {"id": sid, "name": svc["name"], "group": svc["group"], "sub": svc.get("sub", ""),
            "level": base["level"], "tiles": [{"k": a, "v": b} for a, b in tiles],
            "has_log": svc["log"][0] != "none"}
@@ -891,10 +1072,19 @@ _hist = {"t": 0, "range": 0, "data": None}
 
 
 def newest_archive():
-    # 返回最近两个归档(逗号合并),以便跨午夜/跨轮转也能取满时间窗
-    g = glob.glob("/var/log/pcp/pmlogger/*/*.index")
+    if not _pcp_enabled():
+        return ""
+    g = glob.glob(os.path.join(CFG["pcp_log_dir"], "*", "*.index"))
     g.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return ",".join(p[:-6] for p in g[:2]) if g else ""
+
+
+def _pcp_enabled():
+    if CFG["enable_pcp"] is False:
+        return False
+    if not shutil.which("pmrep"):
+        return False
+    return os.path.isdir(CFG["pcp_log_dir"])
 
 
 def _num(s):
@@ -905,6 +1095,8 @@ def _num(s):
 
 
 def history(rng="60"):
+    if not _pcp_enabled():
+        return {"t": [], "cpu": [], "mem": [], "load": []}
     try:
         rng = max(10, min(int(rng), 360))
     except Exception:
@@ -935,7 +1127,7 @@ def history(rng="60"):
 
 
 HTML = r"""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>NEC 监控</title><style>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>__DASHBOARD_TITLE__</title><style>
 *{margin:0;padding:0;box-sizing:border-box;border-radius:0!important}
 :root{--bg:#0b0e13;--side:#11151c;--panel:#161b22;--panel2:#1b212b;--card:#161b22;
 --bd:#242b36;--bd2:#30bcb0;--tx:#e6edf3;--tx2:#8b949e;--tx3:#677183;
@@ -1164,7 +1356,7 @@ function renderChrome(){
       `<div class="alert ${a.level}"><span class="ai">${a.level=='critical'?'⛔':a.level=='info'?'⚙':'⚠'}</span><span>${a.msg}</span><span class="at">${a.since}</span></div>`).join('')}
     else{ab.style.display='none';ab.innerHTML=''}
   }
-  document.title=(al.some(x=>x.level=='critical')?'⛔ ':(al.length?'⚠ ':''))+'NEC 监控';
+  document.title=(al.some(x=>x.level=='critical')?'⛔ ':(al.length?'⚠ ':''))+'__DASHBOARD_TITLE__';
 }
 function renderOverview(){
   document.getElementById('title').textContent='总览';
@@ -1200,8 +1392,8 @@ function mcPanel(m){
       ${mcTile('难度',m.difficulty||'-')}
       ${mcTile('视距',m.viewdist||'-')}
       ${mcTile('验证',m.onlinemode==='false'?'离线':'正版')}
-      ${mcTile('版本',m.version||'Paper 1.21.10')}
-      ${mcTile('隧道',m.tunnel?'正常':'断开',m.tunnel?'var(--grn)':'var(--red)')}
+      ${mcTile('版本',m.version||'-')}
+      ${mcTile('隧道',m.tunnel===null?'-':(m.tunnel?'正常':'断开'),m.tunnel===null?'var(--tx2)':(m.tunnel?'var(--grn)':'var(--red)'))}
       ${mcTile('连接地址',m.connect||'-')}
     </div></section>`;
 }
@@ -1368,6 +1560,10 @@ pollHist();setInterval(pollHist,30000);
 </script></body></html>"""
 
 
+def page_html():
+    return HTML.replace("__DASHBOARD_TITLE__", CFG["title"])
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1398,12 +1594,16 @@ class H(BaseHTTPRequestHandler):
         elif u.path == "/api/alertlog":
             self._send(json.dumps({"text": read_alertlog(q.get("tail", ["80"])[0])}))
         else:
-            self._send(HTML, "text/html; charset=utf-8")
+            self._send(page_html(), "text/html; charset=utf-8")
 
 
 if __name__ == "__main__":
+    os.makedirs(CFG["data_dir"], exist_ok=True)
+    ad = os.path.dirname(CFG["alert_log"])
+    if ad:
+        os.makedirs(ad, exist_ok=True)
     collect()
     threading.Thread(target=prober_loop, daemon=True).start()
     threading.Thread(target=refresher, daemon=True).start()
-    print("dashboard v3 on :%d" % PORT, flush=True)
+    print("dashboard on :%d (%s)" % (PORT, CFG["title"]), flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

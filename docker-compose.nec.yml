@@ -1,0 +1,10 @@
+# nec 主机专用覆盖: host 网络 + 挂载真实 Crafty/PCP 路径
+# 用法: docker compose -f docker-compose.yml -f docker-compose.nec.yml up -d --build
+services:
+  dashboard:
+    network_mode: host
+    ports: !reset []
+    volumes:
+      - /home/zuens2020/dashboard/data:/data
+      - /home/zuens2020/crafty:/crafty:ro
+      - /var/log/pcp:/var/log/pcp:ro
