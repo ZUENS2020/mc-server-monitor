@@ -796,6 +796,60 @@ _mcinfo = {"t": 0, "data": None}
 _mcilock = threading.Lock()
 
 
+def _paper_process():
+    # 优先 pgrep；Docker 等精简环境无 procps 时回退扫 /proc(需 pid:host)
+    try:
+        o = subprocess.run(["pgrep", "-af", "paper.jar"], capture_output=True, text=True, timeout=4, env=ENV)
+        if o.stdout.strip():
+            line = o.stdout.strip().split("\n", 1)[0]
+            pid = line.split(None, 1)[0]
+            return pid, line
+    except Exception:
+        pass
+    root = _proc("")
+    try:
+        for name in os.listdir(root):
+            if not name.isdigit():
+                continue
+            try:
+                with open(os.path.join(root, name, "cmdline"), "rb") as f:
+                    raw = f.read()
+                if b"paper.jar" not in raw:
+                    continue
+                cmd = raw.decode("utf-8", "replace").replace("\x00", " ")
+                return name, cmd
+            except OSError:
+                pass
+    except Exception:
+        pass
+    return "", ""
+
+
+def _paper_mem_uptime(pid, cmd):
+    if not pid:
+        return "-", "-"
+    try:
+        with open(_proc("%s/status" % pid)) as f:
+            rss_kb = 0
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss_kb = int(line.split()[1])
+                    break
+        with open(_proc("%s/stat" % pid)) as f:
+            st = f.read().split()
+        with open(_proc("uptime")) as f:
+            host_up = float(f.read().split()[0])
+        clk = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
+        et = max(0, int(host_up - int(st[21]) / clk))
+        rss_g = rss_kb / 1048576.0
+        mm = re.search(r"-Xmx(\d+)([MmGg])", cmd or "")
+        xmx_g = (int(mm.group(1)) / 1024.0 if mm.group(2).upper() == "M" else float(mm.group(1))) if mm else None
+        mem = ("%.2f / %.1f GiB" % (rss_g, xmx_g)) if xmx_g else ("%.2f GiB" % rss_g)
+        return mem, fmt_dur(et)
+    except Exception:
+        return "-", "-"
+
+
 def mc_info():
     with _mcilock:
         if _mcinfo["t"] and time.time() - _mcinfo["t"] < 5:
@@ -803,19 +857,8 @@ def mc_info():
         st = mc_status(CFG["mc_host"], CFG["mc_port"])
         perf = mc_perf_cached()
         props = mc_props()
-        mem = uptime = "-"
-        try:
-            pids = subprocess.run(["pgrep", "-f", "paper.jar"], capture_output=True, text=True, timeout=4).stdout.split()
-            if pids:
-                o = sh(["ps", "-o", "rss=,etimes=", "-p", pids[0]]).strip().split()
-                if len(o) >= 2:
-                    rss_g = int(o[0]) / 1048576.0
-                    uptime = fmt_dur(int(o[1]))
-                    mm = re.search(r"-Xmx(\d+)([MmGg])", sh(["pgrep", "-af", "paper.jar"]))
-                    xmx_g = (int(mm.group(1)) / 1024.0 if mm.group(2).upper() == "M" else float(mm.group(1))) if mm else None
-                    mem = ("%.2f / %.1f GiB" % (rss_g, xmx_g)) if xmx_g else ("%.2f GiB" % rss_g)
-        except Exception:
-            pass
+        pid, cmd = _paper_process()
+        mem, uptime = _paper_mem_uptime(pid, cmd)
         connect = CFG["mc_connect"] or ("%s:%d" % (CFG["tunnel_host"], CFG["tunnel_port"]) if CFG["tunnel_enabled"] else "%s:%d" % (CFG["mc_host"], CFG["mc_port"]))
         tunnel_up = False
         if CFG["tunnel_enabled"]:
