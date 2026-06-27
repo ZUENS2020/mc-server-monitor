@@ -223,23 +223,41 @@ def _rcon_read(s):
     return rid, ptype, data[8:-2].decode("utf-8", "replace")
 
 
-def rcon_exec(cmds, port, password, host="127.0.0.1", timeout=3):
-    try:
-        s = socket.create_connection((host, port), timeout)
-        s.settimeout(timeout)
-        s.sendall(_rcon_pkt(1, 3, password))
-        rid, _, _ = _rcon_read(s)
-        if rid == -1:
-            s.close()
-            return None
-        out = []
-        for c in cmds:
-            s.sendall(_rcon_pkt(2, 2, c))
-            _, _, body = _rcon_read(s)
-            out.append(body)
+_rconc = {"sock": None}
+_rconlock = threading.Lock()
+
+
+def _rcon_open(host, port, password, timeout):
+    s = socket.create_connection((host, port), timeout)
+    s.settimeout(timeout)
+    s.sendall(_rcon_pkt(1, 3, password))
+    rid, _, _ = _rcon_read(s)
+    if rid == -1:
         s.close()
-        return out
-    except Exception:
+        raise RuntimeError("rcon auth failed")
+    return s
+
+
+def rcon_exec(cmds, port, password, host="127.0.0.1", timeout=3):
+    # 持久连接:开一次反复用,断了才重连 —— 避免每次都连/断刷爆服务器日志
+    with _rconlock:
+        for _ in range(2):
+            try:
+                if _rconc["sock"] is None:
+                    _rconc["sock"] = _rcon_open(host, port, password, timeout)
+                s = _rconc["sock"]
+                out = []
+                for c in cmds:
+                    s.sendall(_rcon_pkt(2, 2, c))
+                    _, _, body = _rcon_read(s)
+                    out.append(body)
+                return out
+            except Exception:
+                try:
+                    _rconc["sock"].close()
+                except Exception:
+                    pass
+                _rconc["sock"] = None
         return None
 
 
@@ -673,6 +691,39 @@ def security_snapshot():
         return out
 
 
+ALERT_LOG = os.path.expanduser("~/dashboard/alerts.log")
+_alertlogged = {}   # 当前活跃且已记录的告警 key -> message
+
+
+def log_alerts(alerts):
+    # 每条告警:首次触发记一行,解除时再记一行(去重,避免每 5s 重复)
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    cur = {a["key"]: a for a in alerts}
+    lines = []
+    for k, a in cur.items():
+        if k not in _alertlogged:
+            lines.append("[%s] [%s] %s" % (ts, a["level"].upper(), a["msg"]))
+            _alertlogged[k] = a["msg"]
+    for k in list(_alertlogged):
+        if k not in cur:
+            lines.append("[%s] [RESOLVED] 解除: %s" % (ts, _alertlogged[k]))
+            del _alertlogged[k]
+    if lines:
+        try:
+            with open(ALERT_LOG, "a") as fh:
+                fh.write("\n".join(lines) + "\n")
+        except Exception:
+            pass
+
+
+def read_alertlog(tail=40):
+    try:
+        with open(ALERT_LOG) as f:
+            return "".join(f.readlines()[-int(tail):]) or "(暂无报警记录)"
+    except Exception:
+        return "(暂无报警记录)"
+
+
 def collect():
     ps, stats = docker_ps(), docker_stats()
     items = {sid: eval_item(sid, ps, stats) for sid in ORDER}
@@ -694,6 +745,10 @@ def collect():
         alerts.append({"level": "info", "key": "autobackup",
                        "msg": "检测到系统预警,已自动触发一次世界备份",
                        "since": fmt_dur(dur) if dur >= 60 else "刚刚"})
+    try:
+        log_alerts(alerts)
+    except Exception:
+        pass
     try:
         mcp = players_cached()
     except Exception:
@@ -771,7 +826,7 @@ def detail(sid):
         sec = security_snapshot()
         out["security"] = {
             "places": sorted([[k, v] for k, v in sec["places"].items()], key=lambda x: -x[1])[:8],
-            "grim": sec["grim"]}
+            "grim": sec["grim"], "log": read_alertlog(40)}
     return out
 
 
@@ -794,7 +849,9 @@ def get_logs(sid, tail=400):
             return "(日志文件不存在,服务器可能未启动)"
         try:
             with open(tgt, "r", errors="replace") as f:
-                return "".join(f.readlines()[-tail:]) or "(空)"
+                lines = f.readlines()[-max(tail * 6, 4000):]
+            lines = [l for l in lines if "RCON Client" not in l and "RCON Listener" not in l]
+            return "".join(lines[-tail:]) or "(空)"
         except Exception as e:
             return "读取失败: %s" % e
     return "(该服务无日志源)"
@@ -965,6 +1022,9 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .ptab .mono{font-family:"SF Mono",Consolas,monospace;color:var(--tx2)}
 .phint{color:var(--tx3);font-size:13px;padding:14px;border:1px dashed var(--bd);background:var(--panel);margin-top:16px}
 .gflag{margin-top:10px;padding:9px 13px;font-size:13px;color:#ff9a93;background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.3);font-weight:600}
+.seclog{margin-top:14px}
+.seclog-h{font-size:12px;color:var(--tx3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:7px}
+.seclog pre{background:#06090d;border:1px solid var(--bd);padding:11px 14px;max-height:200px;overflow:auto;font-family:"SF Mono",Consolas,monospace;font-size:12px;line-height:1.6;color:#bcc6d2;white-space:pre-wrap;word-break:break-word}
 /* 首页玩家墙 */
 .psec-home{margin-top:18px}
 .pcards{display:grid;gap:12px}
@@ -1187,6 +1247,7 @@ async function detailView(id){
       if(pls.length){h+='<table class="ptab"><thead><tr><th>玩家</th><th>放置 / 分钟</th></tr></thead><tbody>'+pls.map(r=>`<tr><td>${esc(r[0])}</td><td style="color:${r[1]>=500?'#ff7b72':r[1]>=200?'#e3b341':'#bcc6d2'};font-weight:600">${r[1]}</td></tr>`).join('')+'</tbody></table>';}
       else h+='<div class="phint">近 1 分钟无方块放置记录</div>';
       h+=gr.length?('<div class="gflag">GrimAC 违规:'+gr.map(f=>`${esc(f.player)} → ${esc(f.check)} (x${f.vl})`).join(' · ')+'</div>'):'<div class="phint" style="margin-top:8px">GrimAC:近 3 分钟无违规</div>';
+      if(d.security.log!=null){h+='<div class="seclog"><div class="seclog-h">报警历史(全部 · 持久化 alerts.log)</div><pre>'+esc(d.security.log)+'</pre></div>';}
       h+='</div>';
       se.innerHTML=h;
     } else if(se){se.innerHTML='';}
@@ -1241,6 +1302,8 @@ class H(BaseHTTPRequestHandler):
             self._send(json.dumps(history(q.get("range", ["60"])[0])))
         elif u.path == "/api/players":
             self._send(json.dumps({"players": players_cached(), "perf": mc_perf_cached()}))
+        elif u.path == "/api/alertlog":
+            self._send(json.dumps({"text": read_alertlog(q.get("tail", ["80"])[0])}))
         else:
             self._send(HTML, "text/html; charset=utf-8")
 
