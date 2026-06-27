@@ -272,14 +272,19 @@ def mc_players_detail():
     if not names:
         return []
     fields = ["Health", "Pos", "Dimension", "foodLevel", "XpLevel", "playerGameType"]
-    cmds = ["data get entity %s %s" % (n, f) for n in names for f in fields]
+    slots = [103, 102, 101, 100]  # 头 胸 腿 脚
+    cmds = []
+    for n in names:
+        cmds += ["data get entity %s %s" % (n, f) for f in fields]
+        cmds += ["data get entity %s Inventory[{Slot:%db}].id" % (n, s) for s in slots]
     res = rcon_exec(cmds, port, pw)
     if res is None:
         return None
+    per = len(fields) + len(slots)  # 10
     players = []
     for i, n in enumerate(names):
-        c = res[i * 6:(i + 1) * 6]
-        if len(c) < 6:
+        c = res[i * per:(i + 1) * per]
+        if len(c) < per:
             continue
         try:
             hp = round(float(_after(c[0]).rstrip("f") or 0))
@@ -291,8 +296,13 @@ def mc_players_detail():
         food = _after(c[3]) or "-"
         xp = _after(c[4]) or "-"
         mode = _GAMET.get(_after(c[5]), _after(c[5]) or "-")
+        armor = []
+        for a in c[6:10]:
+            m = re.search(r'"minecraft:([a-z_]+)"', a)
+            armor.append(m.group(1) if m else None)
         players.append({"name": n, "hp": hp, "pos": coord,
-                        "dim": _DIM.get(dim, dim or "-"), "food": food, "xp": xp, "mode": mode})
+                        "dim": _DIM.get(dim, dim or "-"), "food": food, "xp": xp,
+                        "mode": mode, "armor": armor})
     return players
 
 
@@ -896,7 +906,10 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .pbar i{display:block;height:100%;transition:width .5s}
 .pbar.hp i{background:#d23b3b}.pbar.food i{background:#c8862f}
 .pbar span{position:absolute;left:8px;top:0;line-height:16px;font-size:11px;color:#fff;text-shadow:0 1px 2px #000;font-variant-numeric:tabular-nums}
-.pmeta{font-size:11.5px;color:var(--tx3);margin-top:7px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pmeta{font-size:11.5px;color:var(--tx3);margin-top:7px;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pcoord{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.parmor{display:flex;gap:3px;flex:0 0 auto}
+.aslot{width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:1px solid var(--bd)}
 /* alerts */
 .alertbar{flex:0 0 auto;display:none}
 .alert{display:flex;align-items:center;gap:10px;padding:8px 22px;font-size:13.5px;border-bottom:1px solid var(--bd);border-left:4px solid}
@@ -970,6 +983,18 @@ function renderOverview(){
   renderPwall(DATA.mc_players,DATA.mc_perf);
 }
 function pcols(n){return n<=1?1:n<=2?2:n<=3?3:n<=8?4:n<=15?5:6}
+function armorMat(it){
+  if(!it)return{l:'',bg:'#0e131a',fg:'#4a5360',t:'empty'};
+  if(it.startsWith('netherite_'))return{l:'N',bg:'#3a3340',fg:'#cbb8e0',t:it};
+  if(it.startsWith('diamond_'))return{l:'D',bg:'#16414a',fg:'#5fe6d8',t:it};
+  if(it.startsWith('iron_'))return{l:'I',bg:'#3a4048',fg:'#eef2f6',t:it};
+  if(it.startsWith('golden_'))return{l:'G',bg:'#4a3f1e',fg:'#f0cb5a',t:it};
+  if(it.startsWith('chainmail_'))return{l:'C',bg:'#33383f',fg:'#aab2bd',t:it};
+  if(it.startsWith('leather_'))return{l:'L',bg:'#3d2c1d',fg:'#c89366',t:it};
+  if(it==='turtle_helmet')return{l:'T',bg:'#1f3a24',fg:'#6fcf6f',t:it};
+  if(it==='elytra')return{l:'E',bg:'#332a3d',fg:'#cbb6d8',t:it};
+  return{l:'?',bg:'#2a2f37',fg:'#8b949e',t:it};
+}
 function tpsColor(t){return t>=19?'#3fb950':t>=15?'#d29922':'#f85149'}
 function perfHtml(pf){
   if(!pf||pf.tps_1m==null)return'';
@@ -1006,7 +1031,7 @@ function pcard(p){
       <div class="pname">${esc(p.name)}<span class="pmode">${esc(p.mode)}</span></div>
       <div class="pbar hp"><i style="width:${Math.max(0,Math.min(100,hp/20*100))}%"></i><span>HP ${hp} / 20</span></div>
       <div class="pbar food"><i style="width:${Math.max(0,Math.min(100,food/20*100))}%"></i><span>FOOD ${food} / 20</span></div>
-      <div class="pmeta">${esc(p.dim)} · Lv.${esc(String(p.xp))} · ${esc(p.pos)}</div>
+      <div class="pmeta"><span class="pcoord">${esc(p.dim)} · Lv.${esc(String(p.xp))} · ${esc(p.pos)}</span><span class="parmor">${(p.armor||[null,null,null,null]).map(it=>{const m=armorMat(it);return `<span class="aslot" style="background:${m.bg};color:${m.fg}">${m.l}</span>`}).join('')}</span></div>
     </div></div>`;
 }
 function chart(title,arr,unit,color,fixedMax){
