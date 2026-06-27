@@ -1329,9 +1329,9 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .pbar span{position:absolute;left:8px;top:0;line-height:16px;font-size:11px;color:#fff;text-shadow:0 1px 2px #000;font-variant-numeric:tabular-nums}
 .pmeta{font-size:11.5px;color:var(--tx3);margin-top:7px;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .pcoord{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.parmor{display:inline-flex;gap:3px;flex:0 0 auto;align-items:center;height:13px}
-.aslot{display:block;flex:0 0 13px;width:13px;height:13px;border:1px solid var(--bd);line-height:0;overflow:hidden}
-.aslot.empty{border-color:transparent;background:transparent;box-shadow:inset 0 0 0 1px #4d5159}
+.parmor{display:grid;grid-template-columns:repeat(4,13px);gap:3px;flex:0 0 59px;width:59px;height:13px;align-items:center}
+.aslot{width:13px;height:13px;min-width:13px;max-width:13px;min-height:13px;max-height:13px;border:1px solid var(--bd);box-sizing:border-box;display:block;line-height:0;overflow:hidden;padding:0;margin:0}
+.aslot.empty{background:rgba(255,255,255,.04);border:1px solid #4d5159}
 /* alerts */
 .alertbar{flex:0 0 auto;display:none}
 .alert{display:flex;align-items:center;gap:10px;padding:8px 22px;font-size:13.5px;border-bottom:1px solid var(--bd);border-left:4px solid}
