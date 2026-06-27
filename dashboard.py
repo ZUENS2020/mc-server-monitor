@@ -88,6 +88,14 @@ ENV = dict(os.environ)
 if os.getuid() != 0:
     ENV.setdefault("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
 
+
+def sh(args, timeout=12):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, env=ENV, timeout=timeout).stdout
+    except Exception:
+        return ""
+
+
 _SSL = ssl.create_default_context()
 if not CFG["crafty_tls_verify"]:
     _SSL.check_hostname = False
@@ -170,13 +178,6 @@ GROUP_ORDER = ["Minecraft"]
 _lock = threading.Lock()
 _state = {"groups": [], "sys": {}, "alerts": [], "mc_players": None, "mc_perf": None, "mc": None, "updated": 0, "summary": {"up": 0, "warn": 0, "down": 0, "total": 0}}
 _prev = {"cpu": None, "net": None, "t": None}
-
-
-def sh(args, timeout=12):
-    try:
-        return subprocess.run(args, capture_output=True, text=True, env=ENV, timeout=timeout).stdout
-    except Exception:
-        return ""
 
 
 def docker_ps():
