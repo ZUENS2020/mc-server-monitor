@@ -1087,9 +1087,9 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .pbar span{position:absolute;left:8px;top:0;line-height:16px;font-size:11px;color:#fff;text-shadow:0 1px 2px #000;font-variant-numeric:tabular-nums}
 .pmeta{font-size:11.5px;color:var(--tx3);margin-top:7px;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .pcoord{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.parmor{display:flex;gap:3px;flex:0 0 auto}
-.aslot{width:13px;height:13px;border:1px solid var(--bd)}
-.aslot.empty{border-style:dashed;border-color:#4d5159;background:transparent}
+.parmor{display:inline-flex;gap:3px;flex:0 0 auto;align-items:center;height:13px}
+.aslot{display:block;flex:0 0 13px;width:13px;height:13px;border:1px solid var(--bd);line-height:0;overflow:hidden}
+.aslot.empty{border-color:transparent;background:transparent;box-shadow:inset 0 0 0 1px #4d5159}
 /* alerts */
 .alertbar{flex:0 0 auto;display:none}
 .alert{display:flex;align-items:center;gap:10px;padding:8px 22px;font-size:13.5px;border-bottom:1px solid var(--bd);border-left:4px solid}
@@ -1218,6 +1218,12 @@ function armorMat(it){
   if(it==='elytra')return '#8a7e9a';
   return '#777a7d';
 }
+function armorSlotsHtml(armor){
+  return (armor||[null,null,null,null]).map(it=>{
+    const c=armorMat(it);
+    return c?`<span class="aslot" style="background:${c}"></span>`:`<span class="aslot empty"></span>`;
+  }).join('');
+}
 function tpsColor(t){return t>=19?'#3fb950':t>=15?'#d29922':'#f85149'}
 function perfHtml(pf){
   if(!pf||pf.tps_1m==null)return'';
@@ -1256,7 +1262,7 @@ function pcard(p){
       <div class="pname">${esc(p.name)}<span class="pmode">${esc(p.mode)}</span>${pbadge}</div>
       <div class="pbar hp"><i style="width:${Math.max(0,Math.min(100,hp/20*100))}%"></i><span>HP ${hp} / 20</span></div>
       <div class="pbar food"><i style="width:${Math.max(0,Math.min(100,food/20*100))}%"></i><span>FOOD ${food} / 20</span></div>
-      <div class="pmeta"><span class="pcoord">${esc(p.dim)} · Lv.${esc(String(p.xp))} · ${esc(p.pos)}</span><span class="parmor">${(p.armor||[null,null,null,null]).map(it=>{const c=armorMat(it);return c?`<span class="aslot" style="background:${c}"></span>`:`<span class="aslot empty"></span>`}).join('')}</span></div>
+      <div class="pmeta"><span class="pcoord">${esc(p.dim)} · Lv.${esc(String(p.xp))} · ${esc(p.pos)}</span><span class="parmor">${armorSlotsHtml(p.armor)}</span></div>
     </div></div>`;
 }
 function chart(title,arr,unit,color,fixedMax){
@@ -1324,8 +1330,8 @@ async function detailView(id){
       if(d.players===null)pe.innerHTML='<div class="phint">⚙ RCON 未启用或未连接 —— 重启服务器后,这里显示每个在线玩家的血量 / 坐标 / 维度 / 饥饿 / 经验 / 模式</div>';
       else if(d.players.length===0)pe.innerHTML='<div class="phint">当前无玩家在线</div>';
       else pe.innerHTML=`<div class="psec"><h3>在线玩家状态 · RCON 实时</h3><table class="ptab">
-        <thead><tr><th>玩家</th><th>血量</th><th>维度</th><th>坐标 (X Y Z)</th><th>饥饿</th><th>经验</th><th>模式</th></tr></thead>
-        <tbody>${d.players.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.hp} / 20</td><td>${esc(p.dim)}</td><td class="mono">${esc(p.pos)}</td><td>${p.food} / 20</td><td>Lv.${p.xp}</td><td>${esc(p.mode)}</td></tr>`).join('')}</tbody></table></div>`;
+        <thead><tr><th>玩家</th><th>血量</th><th>维度</th><th>坐标 (X Y Z)</th><th>饥饿</th><th>经验</th><th>模式</th><th>护甲</th></tr></thead>
+        <tbody>${d.players.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.hp} / 20</td><td>${esc(p.dim)}</td><td class="mono">${esc(p.pos)}</td><td>${p.food} / 20</td><td>Lv.${p.xp}</td><td>${esc(p.mode)}</td><td><span class="parmor">${armorSlotsHtml(p.armor)}</span></td></tr>`).join('')}</tbody></table></div>`;
     }
     const se=document.getElementById('secsec');
     if(se&&d.security){
