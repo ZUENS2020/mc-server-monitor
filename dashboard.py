@@ -949,6 +949,15 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,"PingFang SC
 .pill.warn{color:var(--yel)}.pill.warn .d{background:var(--yel)}
 .pill.down{color:var(--red)}.pill.down .d{background:var(--red)}
 #clock{font-weight:600;color:#adbac7;font-variant-numeric:tabular-nums}
+.histbtn{padding:4px 11px;font-size:13px;border:1px solid var(--bd);color:var(--tx2);cursor:pointer;user-select:none}
+.histbtn:hover{color:var(--tx);background:var(--panel2);border-color:var(--bd2)}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:50;align-items:center;justify-content:center}
+.modal.on{display:flex}
+.modal-box{width:min(920px,92vw);max-height:82vh;background:var(--panel);border:1px solid var(--bd2);display:flex;flex-direction:column}
+.modal-h{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid var(--bd);font-size:15px;font-weight:600}
+.modal-x{font-size:13px;color:var(--tx2);cursor:pointer;font-weight:400}
+.modal-x:hover{color:var(--tx)}
+.modal-log{flex:1;overflow:auto;padding:14px 18px;font-family:"SF Mono",Consolas,monospace;font-size:12.5px;line-height:1.7;background:#06090d;white-space:pre-wrap;word-break:break-word}
 main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-direction:column}
 #view>.sysrow,#view>.sec,#view>.secrow{flex:0 0 auto}
 #pwall{flex:1 1 0;min-height:130px;display:flex;flex-direction:column;overflow:hidden;margin-top:12px}
@@ -1058,16 +1067,42 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 <div class="content">
   <div class="top">
     <div class="ti"><span class="mk">⬡</span><span id="title">总览</span></div>
-    <div class="r"><div class="pills" id="pills"></div><div class="sysmeta" id="sysmeta"></div><div id="clock"></div></div>
+    <div class="r"><div class="pills" id="pills"></div><a class="histbtn" onclick="openAlog()">报警历史</a><div class="sysmeta" id="sysmeta"></div><div id="clock"></div></div>
   </div>
   <div class="alertbar" id="alertbar"></div>
   <main id="view"></main>
+  <div class="modal" id="alogmodal" onclick="if(event.target===this)closeAlog()">
+    <div class="modal-box">
+      <div class="modal-h"><span>报警历史 · alerts.log</span><a class="modal-x" onclick="closeAlog()">✕ 关闭</a></div>
+      <div class="modal-log" id="alogtext"></div>
+    </div>
+  </div>
 </div>
 <script>
 let DATA=null,timer=null,HIST=null;
 function tick(){document.getElementById('clock').textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false})}
 setInterval(tick,1000);tick();
 function esc(s){return(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+async function openAlog(){
+  const m=document.getElementById('alogmodal');m.classList.add('on');
+  const el=document.getElementById('alogtext');el.innerHTML='加载中…';
+  try{
+    const j=await(await fetch('/api/alertlog?tail=300',{cache:'no-store'})).json();
+    const t=j.text||'';
+    if(!t.trim()){el.innerHTML='<div style="color:var(--tx3)">暂无报警记录</div>';return;}
+    el.innerHTML=t.split('\n').map(l=>{
+      let c='#bcc6d2';
+      if(l.indexOf('[CRITICAL]')>=0)c='#ff7b72';
+      else if(l.indexOf('[WARNING]')>=0)c='#e3b341';
+      else if(l.indexOf('[RESOLVED]')>=0)c='#56d364';
+      else if(l.indexOf('[INFO]')>=0)c='#5fd9cb';
+      return `<div style="color:${c}">${esc(l)||'&nbsp;'}</div>`;
+    }).join('');
+    el.scrollTop=el.scrollHeight;
+  }catch(e){el.innerHTML='<div style="color:var(--red)">加载失败</div>';}
+}
+function closeAlog(){document.getElementById('alogmodal').classList.remove('on');}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAlog();});
 function fb(n){if(!n)return'0 B/s';const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<3){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]+'/s'}
 function fg(b){const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<4){b/=1024;i++}return b.toFixed(1)+' '+u[i]}
 function lvlc(p){return p>=90?'c':p>=70?'w':''}
