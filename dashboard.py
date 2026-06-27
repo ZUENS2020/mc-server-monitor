@@ -122,10 +122,17 @@ def mc_log_path():
     return p if os.path.exists(p) else ""
 
 
+def _user_systemd_ok():
+    if not CFG["enable_systemd_logs"] or not shutil.which("systemctl"):
+        return False
+    st = sh(["systemctl", "--user", "is-system-running"], timeout=3).strip()
+    return st in ("running", "degraded")
+
+
 def _tunnel_check_mode():
     mode = CFG["tunnel_check"]
     if mode == "auto":
-        return "systemd" if CFG["enable_systemd_logs"] and shutil.which("systemctl") else "tcp"
+        return "systemd" if _user_systemd_ok() else "tcp"
     return mode
 
 
