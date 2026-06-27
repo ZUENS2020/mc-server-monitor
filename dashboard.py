@@ -1460,7 +1460,9 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .phint{color:var(--tx3);font-size:13px;padding:14px;border:1px dashed var(--bd);background:var(--panel);margin-top:16px}
 .gflag{margin-top:10px;padding:9px 13px;font-size:13px;color:#ff9a93;background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.3);font-weight:600}
 .seclog{margin-top:14px}
-.seclog-h{font-size:12px;color:var(--tx3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:7px}
+.seclog-h{font-size:12px;color:var(--tx3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:7px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.seclog-h .r{display:flex;align-items:center;gap:12px;font-size:12px;font-weight:400;color:var(--tx3);text-transform:none;letter-spacing:0}
+.seclog-h a{cursor:pointer;color:var(--tx3)}.seclog-h a:hover{color:var(--tx)}
 .seclog pre{background:#06090d;border:1px solid var(--bd);padding:11px 14px;max-height:200px;overflow:auto;font-family:"SF Mono",Consolas,monospace;font-size:12px;line-height:1.6;color:#bcc6d2;white-space:pre-wrap;word-break:break-word}
 /* 首页玩家墙 */
 .psec-home{margin-top:18px}
@@ -1503,7 +1505,7 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
   <main id="view"></main>
   <div class="modal" id="alogmodal" onclick="if(event.target===this)closeAlog()">
     <div class="modal-box">
-      <div class="modal-h"><span>报警历史 · alerts.log</span><a class="modal-x" onclick="closeAlog()">✕ 关闭</a></div>
+      <div class="modal-h"><span>报警历史 · alerts.log</span><div class="r" style="display:flex;align-items:center;gap:14px;font-size:12px;font-weight:400;color:var(--tx3)"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="alogmodalauto" checked>自动滚动</label><a class="modal-x" onclick="scrollAlog()">↓ 底部</a><a class="modal-x" onclick="closeAlog()">✕ 关闭</a></div></div>
       <div class="modal-log" id="alogtext"></div>
     </div>
   </div>
@@ -1513,6 +1515,7 @@ let DATA=null,timer=null,HIST=null;
 function tick(){document.getElementById('clock').textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false})}
 setInterval(tick,1000);tick();
 function esc(s){return(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function scrollAlog(){const el=document.getElementById('alogtext');if(el)el.scrollTop=el.scrollHeight;}
 async function openAlog(){
   const m=document.getElementById('alogmodal');m.classList.add('on');
   const el=document.getElementById('alogtext');el.innerHTML='加载中…';
@@ -1528,7 +1531,7 @@ async function openAlog(){
       else if(l.indexOf('[INFO]')>=0)c='#5fd9cb';
       return `<div style="color:${c}">${esc(l)||'&nbsp;'}</div>`;
     }).join('');
-    el.scrollTop=el.scrollHeight;
+    const a=document.getElementById('alogmodalauto');if(!a||a.checked)scrollAlog();
   }catch(e){el.innerHTML='<div style="color:var(--red)">加载失败</div>';}
 }
 function closeAlog(){document.getElementById('alogmodal').classList.remove('on');}
@@ -1732,13 +1735,15 @@ async function detailView(id){
     const se=document.getElementById('secsec');
     if(se&&d.security){
       const pls=d.security.places||[],gr=d.security.grim||[];
+      const alogAuto=!document.getElementById('alogauto')||document.getElementById('alogauto').checked;
       let h='<div class="psec"><h3>安全检测 · 放置速率(近1分钟) / GrimAC 违规</h3>';
       if(pls.length){h+='<table class="ptab"><thead><tr><th>玩家</th><th>放置 / 分钟</th></tr></thead><tbody>'+pls.map(r=>`<tr><td>${esc(r[0])}</td><td style="color:${r[1]>=500?'#ff7b72':r[1]>=200?'#e3b341':'#bcc6d2'};font-weight:600">${r[1]}</td></tr>`).join('')+'</tbody></table>';}
       else h+='<div class="phint">近 1 分钟无方块放置记录</div>';
       h+=gr.length?('<div class="gflag">GrimAC 违规:'+gr.map(f=>`${esc(f.player)} → ${esc(f.check)} (x${f.vl})`).join(' · ')+'</div>'):'<div class="phint" style="margin-top:8px">GrimAC:近 3 分钟无违规</div>';
-      if(d.security.log!=null){h+='<div class="seclog"><div class="seclog-h">报警历史(全部 · 持久化 alerts.log)</div><pre>'+esc(d.security.log)+'</pre></div>';}
+      if(d.security.log!=null){h+=`<div class="seclog"><div class="seclog-h"><span>报警历史(全部 · 持久化 alerts.log)</span><div class="r"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="alogauto"${alogAuto?' checked':''}>自动滚动</label><a onclick="var p=document.getElementById('alogpre');if(p)p.scrollTop=p.scrollHeight">↓ 底部</a></div></div><pre id="alogpre">${esc(d.security.log)}</pre></div>`;}
       h+='</div>';
       se.innerHTML=h;
+      if(alogAuto){const p=document.getElementById('alogpre');if(p)p.scrollTop=p.scrollHeight;}
     } else if(se){se.innerHTML='';}
     return d;
   }
