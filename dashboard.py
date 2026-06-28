@@ -78,6 +78,8 @@ def load_config():
         "probe_direct_url": _env("PROBE_DIRECT_URL", "https://www.cloudflare.com"),
         "probe_proxy_url": _env("PROBE_PROXY_URL", "https://www.gstatic.com/generate_204"),
         "log_tz": _env("LOG_TZ", ""),
+        "place_warn_rate": _env_int("PLACE_WARN_RATE", 400),
+        "place_critical_rate": _env_int("PLACE_CRITICAL_RATE", 800),
     }
 
 
@@ -738,9 +740,9 @@ def build_alerts(items, sysd):
             add("warning", "tps", "MC 服务器 TPS 偏低 %.1f(正常 20)" % t)
     sec = security_snapshot()
     for name, rate in sec["places"].items():
-        if rate >= 500:
+        if rate >= CFG["place_critical_rate"]:
             add("critical", "place_" + name, "%s 放置 %d 块/分,高度疑似自动搭建/打印机" % (name, rate))
-        elif rate >= 200:
+        elif rate >= CFG["place_warn_rate"]:
             add("warning", "place_" + name, "%s 放置 %d 块/分,疑似自动搭建" % (name, rate))
     for f in sec["grim"]:
         add("warning", "grim_%s_%s" % (f["player"], f["check"]),
@@ -1582,6 +1584,7 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 </div>
 <script>
 let DATA=null,timer=null,HIST=null,BACKEND={ok:null,latency:null,failCount:0};
+const PLACE_WARN=__PLACE_WARN__,PLACE_CRIT=__PLACE_CRIT__;
 function tick(){document.getElementById('clock').textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false})}
 setInterval(tick,1000);tick();
 function esc(s){return(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
@@ -1755,7 +1758,7 @@ function pcard(p){
   const cls=!valid?'':hp<=0?'dead':((hp<10)||(fvalid&&fn<10))?'danger':'';
   const nm=encodeURIComponent(p.name);
   const pl=p.place||0;
-  const pbadge=pl>=500?`<span class="pflag c">▲${pl}/m</span>`:pl>=200?`<span class="pflag w">▲${pl}/m</span>`:'';
+  const pbadge=pl>=PLACE_CRIT?`<span class="pflag c">▲${pl}/m</span>`:pl>=PLACE_WARN?`<span class="pflag w">▲${pl}/m</span>`:'';
   return `<div class="pcard ${cls}">
     <img class="pav" src="https://minotar.net/helm/${nm}/56.png" onerror="this.onerror=null;this.src='https://minotar.net/helm/MHF_Steve/56.png'">
     <div class="pinfo">
@@ -1838,7 +1841,7 @@ async function detailView(id){
       const pls=d.security.places||[],gr=d.security.grim||[];
       const alogAuto=!document.getElementById('alogauto')||document.getElementById('alogauto').checked;
       let h='<div class="psec"><h3>安全检测 · 放置速率(近1分钟) / GrimAC 违规</h3>';
-      if(pls.length){h+='<table class="ptab"><thead><tr><th>玩家</th><th>放置 / 分钟</th></tr></thead><tbody>'+pls.map(r=>`<tr><td>${esc(r[0])}</td><td style="color:${r[1]>=500?'#ff7b72':r[1]>=200?'#e3b341':'#bcc6d2'};font-weight:600">${r[1]}</td></tr>`).join('')+'</tbody></table>';}
+      if(pls.length){h+='<table class="ptab"><thead><tr><th>玩家</th><th>放置 / 分钟</th></tr></thead><tbody>'+pls.map(r=>`<tr><td>${esc(r[0])}</td><td style="color:${r[1]>=PLACE_CRIT?'#ff7b72':r[1]>=PLACE_WARN?'#e3b341':'#bcc6d2'};font-weight:600">${r[1]}</td></tr>`).join('')+'</tbody></table>';}
       else h+='<div class="phint">近 1 分钟无方块放置记录</div>';
       h+=gr.length?('<div class="gflag">GrimAC 违规:'+gr.map(f=>`${esc(f.player)} → ${esc(f.check)} (x${f.vl})`).join(' · ')+'</div>'):'<div class="phint" style="margin-top:8px">GrimAC:近 3 分钟无违规</div>';
       if(d.security.log!=null){h+=`<div class="seclog"><div class="seclog-h"><span>报警历史(全部 · 持久化 alerts.log)</span><div class="r"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="alogauto"${alogAuto?' checked':''}>自动滚动</label><a onclick="var p=document.getElementById('alogpre');if(p)p.scrollTop=p.scrollHeight">↓ 底部</a></div></div><pre id="alogpre">${esc(d.security.log)}</pre></div>`;}
@@ -1871,7 +1874,9 @@ setInterval(pollHist,30000);
 
 
 def page_html():
-    return HTML.replace("__DASHBOARD_TITLE__", CFG["title"])
+    return (HTML.replace("__DASHBOARD_TITLE__", CFG["title"])
+            .replace("__PLACE_WARN__", str(CFG["place_warn_rate"]))
+            .replace("__PLACE_CRIT__", str(CFG["place_critical_rate"])))
 
 
 class H(BaseHTTPRequestHandler):
