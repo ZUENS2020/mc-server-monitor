@@ -760,6 +760,64 @@ def build_alerts(items, sysd):
 # ---------- 预警自动备份 ----------
 BACKUP_TRIGGER = ("mem", "swap", "cpu", "load", "svc_mc")
 _backup = {"last": 0, "token": "", "token_t": 0}
+_DISMISS_FILE = os.path.join(CFG["data_dir"], "dismissed_alerts.json")
+_dismissed = {}
+_dismiss_lock = threading.Lock()
+
+
+def _load_dismissed():
+    global _dismissed
+    try:
+        with open(_DISMISS_FILE) as f:
+            _dismissed = json.load(f)
+    except Exception:
+        _dismissed = {}
+
+
+def _save_dismissed():
+    try:
+        os.makedirs(CFG["data_dir"], exist_ok=True)
+        with open(_DISMISS_FILE, "w") as f:
+            json.dump(_dismissed, f)
+    except Exception:
+        pass
+
+
+def apply_dismissed(alerts):
+    with _dismiss_lock:
+        active = {a["key"] for a in alerts}
+        for k in list(_dismissed):
+            if k == "autobackup":
+                if not (_backup["last"] and time.time() - _backup["last"] < 900):
+                    del _dismissed[k]
+            elif k not in active:
+                del _dismissed[k]
+        out = []
+        for a in alerts:
+            k = a["key"]
+            if k == "autobackup":
+                if _dismissed.get(k) == _backup["last"]:
+                    continue
+            elif _dismissed.get(k):
+                continue
+            out.append(a)
+        return out
+
+
+def dismiss_alert(key):
+    if not key:
+        return False
+    with _dismiss_lock:
+        if key == "autobackup":
+            if not (_backup["last"] and time.time() - _backup["last"] < 900):
+                return False
+            _dismissed[key] = _backup["last"]
+        else:
+            _dismissed[key] = True
+        _save_dismissed()
+    with _lock:
+        _state["alerts"] = [a for a in _state["alerts"] if a["key"] != key]
+    return True
 
 
 def crafty_password():
@@ -1177,7 +1235,7 @@ def collect():
     with _lock:
         _state["groups"] = groups
         _state["sys"] = sysd
-        _state["alerts"] = alerts
+        _state["alerts"] = apply_dismissed(alerts)
         _state["mc_players"] = mcp
         _state["mc_perf"] = mc_perf_cached()
         _state["mc"] = mc_info()
@@ -1496,6 +1554,8 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 .alert.info{background:rgba(48,188,176,.1);color:#5fd9cb;border-left-color:var(--ac)}
 .alert .ai{font-size:14px;flex:0 0 auto}
 .alert .at{margin-left:auto;color:var(--tx3);font-size:12px;flex:0 0 auto}
+.alert .ax{margin-left:10px;color:var(--tx3);cursor:pointer;font-size:14px;flex:0 0 auto;line-height:1;padding:0 2px;user-select:none}
+.alert .ax:hover{color:var(--tx)}
 </style></head><body>
 <div class="content">
   <div class="top">
@@ -1566,6 +1626,15 @@ async function poll(){
   renderChrome();const id=curRoute();
   if(!id)renderOverview();
 }
+async function dismissAlert(key){
+  try{
+    const r=await fetch('/api/alerts/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
+    if(!r.ok)return;
+    const j=await r.json();
+    if(j.ok&&DATA&&DATA.alerts)DATA.alerts=DATA.alerts.filter(a=>a.key!==key);
+    renderChrome();
+  }catch(e){}
+}
 function renderChrome(){
   const alz=DATA.alerts||[];
   const crit=alz.filter(a=>a.level==='critical').length, warn=alz.filter(a=>a.level==='warning').length;
@@ -1579,7 +1648,7 @@ function renderChrome(){
   const al=DATA.alerts||[],ab=document.getElementById('alertbar');
   if(ab){
     if(al.length){ab.style.display='block';ab.innerHTML=al.map(a=>
-      `<div class="alert ${a.level}"><span class="ai">${a.level=='critical'?'⛔':a.level=='info'?'⚙':'⚠'}</span><span>${a.msg}</span><span class="at">${a.since}</span></div>`).join('')}
+      `<div class="alert ${a.level}"><span class="ai">${a.level=='critical'?'⛔':a.level=='info'?'⚙':'⚠'}</span><span>${a.msg}</span><span class="at">${a.since}</span><a class="ax" onclick="dismissAlert(${JSON.stringify(a.key)})" title="关闭">✕</a></div>`).join('')}
     else{ab.style.display='none';ab.innerHTML=''}
   }
   document.title=(al.some(x=>x.level=='critical')?'⛔ ':(al.length?'⚠ ':''))+'__DASHBOARD_TITLE__';
@@ -1825,6 +1894,19 @@ class H(BaseHTTPRequestHandler):
         else:
             self._send(page_html(), "text/html; charset=utf-8")
 
+    def do_POST(self):
+        u = urllib.parse.urlparse(self.path)
+        if u.path == "/api/alerts/dismiss":
+            n = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(n).decode() if n else "{}"
+            try:
+                key = json.loads(body).get("key", "")
+            except Exception:
+                key = ""
+            self._send(json.dumps({"ok": dismiss_alert(key)}))
+        else:
+            self.send_response(404)
+            self.end_headers()
 
 if __name__ == "__main__":
     import sys
@@ -1839,6 +1921,7 @@ if __name__ == "__main__":
         sys.exit(0)
     if not _ring["t"]:
         _seed_ring_from_pcp()
+    _load_dismissed()
     collect()
     threading.Thread(target=prober_loop, daemon=True).start()
     threading.Thread(target=refresher, daemon=True).start()
