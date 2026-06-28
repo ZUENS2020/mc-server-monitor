@@ -651,18 +651,6 @@ _seen = {}
 _alert_since = {}
 
 
-def connectivity_snapshot():
-    if not CFG["enable_connectivity_probe"]:
-        return {"enabled": False, "items": []}
-    items = [
-        {"id": "direct", "label": "外网", "ok": _probe["direct"]},
-        {"id": "proxy", "label": "代理", "ok": _probe["proxy"]},
-    ]
-    if CFG["tunnel_enabled"]:
-        items.append({"id": "frp", "label": CFG["tunnel_name"], "ok": _probe["frp"]})
-    return {"enabled": True, "items": items}
-
-
 def do_probe():
     if not CFG["enable_connectivity_probe"]:
         _probe.update(direct=True, proxy=True, frp=True)
@@ -1193,7 +1181,6 @@ def collect():
         _state["mc_players"] = mcp
         _state["mc_perf"] = mc_perf_cached()
         _state["mc"] = mc_info()
-        _state["connectivity"] = connectivity_snapshot()
         _state["updated"] = int(time.time())
         _state["summary"] = {"up": up, "warn": warn, "down": down, "total": up + warn + down}
 
@@ -1373,11 +1360,6 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,"PingFang SC
 .top .ti{display:flex;align-items:center;gap:10px}
 .top .mk{width:26px;height:26px;background:linear-gradient(135deg,#30bcb0,#3fb950);display:flex;align-items:center;justify-content:center;font-weight:800;color:#06120f;font-size:14px}
 .sysmeta{color:var(--tx3);font-size:12.5px;font-variant-numeric:tabular-nums}
-.connmeta{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--tx3)}
-.conn{display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
-.conn .d{width:7px;height:7px;flex:0 0 auto}
-.conn.up{color:var(--grn)}.conn.up .d{background:var(--grn)}
-.conn.down{color:var(--red)}.conn.down .d{background:var(--red);animation:bl 1.3s infinite}
 .back{display:inline-flex;align-items:center;gap:6px;color:var(--tx2);font-size:13.5px;cursor:pointer;margin-bottom:14px;border:1px solid var(--bd);padding:5px 11px;width:fit-content}
 .back:hover{color:var(--tx);background:var(--panel)}
 .top{height:54px;flex:0 0 54px;border-bottom:1px solid var(--bd);background:var(--panel);display:flex;align-items:center;justify-content:space-between;padding:0 22px}
@@ -1517,7 +1499,7 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
 <div class="content">
   <div class="top">
     <div class="ti"><span id="title">总览</span></div>
-    <div class="r"><div class="pills" id="pills"></div><div class="connmeta" id="connmeta"></div><div class="sysmeta" id="sysmeta"></div><div id="clock"></div></div>
+    <div class="r"><div class="pills" id="pills"></div><div class="sysmeta" id="sysmeta"></div><div id="clock"></div></div>
   </div>
   <div class="alertbar" id="alertbar"></div>
   <main id="view"></main>
@@ -1529,7 +1511,7 @@ main{flex:1;min-height:0;overflow:hidden;padding:16px 22px;display:flex;flex-dir
   </div>
 </div>
 <script>
-let DATA=null,timer=null,HIST=null;
+let DATA=null,timer=null,HIST=null,BACKEND={ok:null,latency:null,failCount:0};
 function tick(){document.getElementById('clock').textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false})}
 setInterval(tick,1000);tick();
 function esc(s){return(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
@@ -1559,10 +1541,32 @@ function fg(b){const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<4){b/=
 function lvlc(p){return p>=90?'c':p>=70?'w':''}
 
 function curRoute(){return location.hash.startsWith('#/s/')?location.hash.slice(4):''}
+function backendStatHtml(){
+  const b=BACKEND;
+  if(b.ok===null)return `<div class="stat" id="backend-stat"><div class="l"><span>后端</span></div><div class="big" style="color:var(--tx2)">检测中</div><div class="sm">-</div></div>`;
+  const col=b.ok?'var(--grn)':'var(--red)', big=b.ok?'正常':'断开';
+  let sm='-';
+  if(b.ok&&b.latency!=null)sm=b.latency+' ms';
+  else if(!b.ok&&b.failCount)sm='失败 '+b.failCount+' 次';
+  return `<div class="stat" id="backend-stat"><div class="l"><span>后端</span></div><div class="big" style="color:${col}">${big}</div><div class="sm">${sm}</div></div>`;
+}
+function refreshBackendStat(){const el=document.getElementById('backend-stat');if(el)el.outerHTML=backendStatHtml();}
 async function poll(){
-  try{DATA=await(await fetch('/api/status',{cache:'no-store'})).json();}catch(e){return}
+  const t0=performance.now();
+  try{
+    const r=await fetch('/api/status',{cache:'no-store'});
+    const latency=Math.round(performance.now()-t0);
+    if(!r.ok)throw new Error(String(r.status));
+    DATA=await r.json();
+    BACKEND={ok:true,latency,failCount:0};
+  }catch(e){
+    BACKEND={...BACKEND,ok:false,failCount:(BACKEND.failCount||0)+1};
+    refreshBackendStat();
+    return;
+  }
   renderChrome();const id=curRoute();
   if(!id)renderOverview();
+  else refreshBackendStat();
 }
 function renderChrome(){
   const alz=DATA.alerts||[];
@@ -1572,13 +1576,6 @@ function renderChrome(){
   if(warn)ph+=`<span class="pill warn"><span class="d"></span>${warn} 警告</span>`;
   if(!ph)ph=`<span class="pill up"><span class="d"></span>运行正常</span>`;
   document.getElementById('pills').innerHTML=ph;
-  const conn=DATA.connectivity||{},cm=document.getElementById('connmeta');
-  if(cm){
-    if(conn.enabled&&conn.items&&conn.items.length){
-      cm.innerHTML=conn.items.map(it=>`<span class="conn ${it.ok?'up':'down'}"><span class="d"></span>${esc(it.label)}</span>`).join('');
-      cm.style.display='flex';
-    }else{cm.innerHTML='';cm.style.display='none';}
-  }
   document.getElementById('sysmeta').textContent=`服务器 ${(DATA.sys||{}).uptime||'-'}`;
   const al=DATA.alerts||[],ab=document.getElementById('alertbar');
   if(ab){
@@ -1590,11 +1587,7 @@ function renderChrome(){
 }
 function renderOverview(){
   document.getElementById('title').textContent='总览';
-  const sy=DATA.sys||{}, conn=DATA.connectivity||{};
-  const connStats=(conn.items||[]).map(it=>{
-    const col=it.ok?'var(--grn)':'var(--red)';
-    return statPlain(it.label,`<span style="color:${col}">${it.ok?'正常':'中断'}</span>`,it.ok?'可达':'不可达');
-  }).join('');
+  const sy=DATA.sys||{};
   const sys=`<section class="sec full" style="margin-top:16px"><h2><span class="bar2"></span>整机资源</h2><div class="sysrow">
     ${statBar('CPU',sy.cpu+' %',(sy.ncpu||'')+' 核',sy.cpu)}
     ${statBar('内存',sy.mem_pct+' %',fg((sy.mem_used||0)*1073741824)+' / '+fg((sy.mem_total||0)*1073741824),sy.mem_pct)}
@@ -1602,7 +1595,7 @@ function renderOverview(){
     ${statBar('Swap',sy.swap_total?Math.round(sy.swap_used/sy.swap_total*100)+' %':'0 %',fg((sy.swap_used||0)*1073741824)+' / '+fg((sy.swap_total||0)*1073741824),sy.swap_total?sy.swap_used/sy.swap_total*100:0)}
     ${statPlain('网络','↓ '+fb(sy.net_rx),'↑ '+fb(sy.net_tx))}
     ${statPlain('系统负载',(sy.load||['-'])[0],'1 / 5 / 15 min')}
-    ${connStats}
+    ${backendStatHtml()}
   </div></section>`;
   let charts='';
   if(HIST&&HIST.t&&HIST.t.length){
@@ -1848,7 +1841,6 @@ if __name__ == "__main__":
         sys.exit(0)
     if not _ring["t"]:
         _seed_ring_from_pcp()
-    do_probe()
     collect()
     threading.Thread(target=prober_loop, daemon=True).start()
     threading.Thread(target=refresher, daemon=True).start()
