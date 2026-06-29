@@ -293,6 +293,7 @@ private fun Sparkline(label: String, values: List<Float?>, color: Color) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        val outlineColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
         Canvas(Modifier.fillMaxWidth().height(48.dp)) {
             if (nums.size < 2) return@Canvas
             val maxV = (nums.maxOrNull() ?: 1f).coerceAtLeast(1f)
@@ -305,7 +306,7 @@ private fun Sparkline(label: String, values: List<Float?>, color: Color) {
             }
             drawPath(path, color, style = Stroke(width = 3f))
             drawLine(
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                color = outlineColor,
                 start = Offset(0f, size.height),
                 end = Offset(size.width, size.height),
                 strokeWidth = 1f,
