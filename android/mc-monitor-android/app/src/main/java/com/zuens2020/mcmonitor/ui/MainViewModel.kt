@@ -91,6 +91,7 @@ class MainViewModel(
     fun saveHistoryRange(minutes: Int) {
         viewModelScope.launch {
             settings.setHistoryRange(minutes)
+            _state.update { it.copy(historyRange = minutes, history = null, historyLoading = true, historyError = null) }
             loadHistory(minutes)
         }
     }
@@ -142,10 +143,12 @@ class MainViewModel(
 
     fun loadHistory(range: Int = _state.value.historyRange) {
         viewModelScope.launch {
-            _state.update { it.copy(historyLoading = true, historyError = null) }
+            _state.update { it.copy(historyLoading = true, historyError = null, historyRange = range) }
             val url = settings.baseUrl.first()
             monitor.fetchHistory(url, range)
-                .onSuccess { data -> _state.update { it.copy(history = data, historyLoading = false) } }
+                .onSuccess { data ->
+                    _state.update { it.copy(history = data, historyLoading = false, historyRange = data.rangeMinutes) }
+                }
                 .onFailure { e ->
                     _state.update { it.copy(historyLoading = false, historyError = e.message ?: "加载失败") }
                 }

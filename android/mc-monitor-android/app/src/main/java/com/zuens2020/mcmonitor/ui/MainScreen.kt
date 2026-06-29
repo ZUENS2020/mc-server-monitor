@@ -225,6 +225,7 @@ fun MainScreen(vm: MainViewModel) {
                             )
                         }
                         composable(Routes.Performance) {
+                            LaunchedEffect(ui.historyRange) { vm.loadHistory(ui.historyRange) }
                             PerformanceScreen(
                                 mc = ui.status?.mc,
                                 mcPerf = ui.status?.mcPerf,

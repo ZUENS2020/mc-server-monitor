@@ -92,8 +92,8 @@ class MonitorRepository {
                     .build()
                 client.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: error("empty body")
-                    if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                    CraftyActionResult.fromJson(body)
+                    if (!resp.isSuccessful) error("HTTP ${resp.code}: ${body.take(120)}")
+                    CraftyActionResult.fromJson(ensureJson(body, "/api/crafty/action"))
                 }
             }
         }
@@ -129,13 +129,22 @@ class MonitorRepository {
         val url = baseUrl.trimEnd('/') + path
         val req = Request.Builder()
             .url(url)
-            .header("User-Agent", "McMonitor-Android/1.1")
+            .header("User-Agent", "McMonitor-Android/1.2.1")
+            .header("Accept", "application/json")
             .get()
             .build()
         return client.newCall(req).execute().use { resp ->
             val body = resp.body?.string() ?: error("empty body")
             if (!resp.isSuccessful) error("HTTP ${resp.code}: ${body.take(120)}")
-            body
+            ensureJson(body, path)
         }
+    }
+
+    private fun ensureJson(body: String, path: String): String {
+        val trimmed = body.trimStart()
+        if (trimmed.startsWith("<!") || trimmed.startsWith("<html", ignoreCase = true)) {
+            error("接口 $path 未就绪，请更新并重启 dashboard 服务")
+        }
+        return body
     }
 }

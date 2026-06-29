@@ -184,10 +184,22 @@ data class PlayerInfo(
     val xp: String = "-",
     val mode: String = "-",
     val armor: List<String> = emptyList(),
+    val armorSlots: List<String?> = emptyList(),
     val onlineFor: String = "-",
     val place: Int = 0,
 ) {
     companion object {
+        private fun parseArmorSlots(arr: org.json.JSONArray?): List<String?> {
+            if (arr == null) return List(4) { null }
+            return List(4) { i ->
+                if (i >= arr.length()) null
+                else when (val v = arr.opt(i)) {
+                    null, org.json.JSONObject.NULL -> null
+                    else -> v.toString().trim().removeSurrounding("\"")
+                }
+            }
+        }
+
         fun from(o: JSONObject) = PlayerInfo(
             name = o.optString("name", "?"),
             hp = o.opt("hp")?.toString() ?: "-",
@@ -196,14 +208,8 @@ data class PlayerInfo(
             food = o.optString("food", "-"),
             xp = o.optString("xp", "-"),
             mode = o.optString("mode", "-"),
-            armor = o.optJSONArray("armor")?.let { arr ->
-                buildList {
-                    for (i in 0 until arr.length()) {
-                        val v = arr.optString(i)
-                        if (!v.isNullOrBlank() && v != "null") add(v)
-                    }
-                }
-            } ?: emptyList(),
+            armorSlots = parseArmorSlots(o.optJSONArray("armor")),
+            armor = parseArmorSlots(o.optJSONArray("armor")).filterNotNull(),
             onlineFor = o.optString("online_for", "-"),
             place = o.optInt("place", 0),
         )
@@ -323,6 +329,7 @@ data class HistoryData(
     val mem: List<Float?>,
     val load: List<Float?>,
     val source: String,
+    val rangeMinutes: Int = 60,
 ) {
     companion object {
         fun fromJson(raw: String): HistoryData {
@@ -350,6 +357,7 @@ data class HistoryData(
                 mem = numArr("mem"),
                 load = numArr("load"),
                 source = o.optString("source", "live"),
+                rangeMinutes = o.optInt("range", 60),
             )
         }
     }
@@ -359,11 +367,13 @@ data class CraftyInfo(
     val enabled: Boolean,
     val authenticated: Boolean,
     val serverId: String,
+    val serverName: String,
     val mcOnline: Boolean,
     val players: String,
     val lastBackup: Long,
     val lastBackupAgo: String?,
     val actions: List<String>,
+    val backupEnabled: Boolean,
 ) {
     companion object {
         fun fromJson(raw: String): CraftyInfo {
@@ -376,11 +386,13 @@ data class CraftyInfo(
                 enabled = o.optBoolean("enabled"),
                 authenticated = o.optBoolean("authenticated"),
                 serverId = o.optString("server_id", ""),
+                serverName = o.optString("server_name", "Minecraft"),
                 mcOnline = o.optBoolean("mc_online"),
                 players = o.optString("players", "-"),
                 lastBackup = o.optLong("last_backup"),
                 lastBackupAgo = o.optString("last_backup_ago").takeIf { it.isNotBlank() },
                 actions = actions,
+                backupEnabled = o.optBoolean("backup_enabled", true),
             )
         }
     }
@@ -390,9 +402,15 @@ data class CraftyActionResult(val ok: Boolean, val error: String?) {
     companion object {
         fun fromJson(raw: String): CraftyActionResult {
             val o = JSONObject(raw)
+            val err = o.opt("error")?.let { v ->
+                when (v) {
+                    is JSONObject -> v.optString("message", v.toString())
+                    else -> v.toString()
+                }
+            }?.takeIf { it.isNotBlank() && it != "null" }
             return CraftyActionResult(
                 ok = o.optBoolean("ok"),
-                error = o.optString("error").takeIf { it.isNotBlank() },
+                error = err,
             )
         }
     }

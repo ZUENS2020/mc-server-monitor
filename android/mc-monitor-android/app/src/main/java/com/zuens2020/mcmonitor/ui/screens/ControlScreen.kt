@@ -111,7 +111,7 @@ private fun CraftyPanel(
             when {
                 loading && crafty == null -> Text("连接 Crafty…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 crafty == null || !crafty.enabled -> Text(
-                    error ?: "Crafty 未配置或不可用",
+                    error ?: "Crafty 未配置。若按钮无响应，请更新 NEC 上的 dashboard.py 并重启监控服务。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 else -> {
@@ -119,7 +119,7 @@ private fun CraftyPanel(
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("Pure Survive", fontWeight = FontWeight.Bold)
+                        Text(crafty.serverName, fontWeight = FontWeight.Bold)
                         StatusChip(if (crafty.mcOnline) "运行中" else "已停止", crafty.mcOnline)
                     }
                     Text(
@@ -128,13 +128,16 @@ private fun CraftyPanel(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (!crafty.authenticated) {
-                        Text("Crafty 认证失败", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        Text("Crafty 认证失败，请检查凭据", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (!crafty.backupEnabled) {
+                        Text("自动备份已关闭，手动备份仍可用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CraftyButton("启动", "start_server", actionRunning, onAction)
-                        CraftyButton("停止", "stop_server", actionRunning, onAction)
-                        CraftyButton("重启", "restart_server", actionRunning, onAction)
-                        CraftyButton("备份", "backup_server", actionRunning, onAction)
+                        if ("start_server" in crafty.actions) CraftyButton("启动", "start_server", actionRunning, onAction)
+                        if ("stop_server" in crafty.actions) CraftyButton("停止", "stop_server", actionRunning, onAction)
+                        if ("restart_server" in crafty.actions) CraftyButton("重启", "restart_server", actionRunning, onAction)
+                        if ("backup_server" in crafty.actions) CraftyButton("备份", "backup_server", actionRunning, onAction)
                     }
                 }
             }

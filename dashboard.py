@@ -872,6 +872,27 @@ def crafty_backup():
 CRAFTY_ACTIONS = {"start_server", "stop_server", "restart_server", "backup_server"}
 
 
+def _slice_ring(rng):
+    """按请求的时间范围截取内存环形缓冲(每点约 interval 秒)."""
+    interval = max(1, int(_ring.get("interval") or 30))
+    n = max(2, min(len(_ring["t"]), rng * 60 // interval))
+    return {k: _ring[k][-n:] for k in ("t", "cpu", "mem", "load")}
+
+
+def crafty_server_state():
+    sid, tok = crafty_sid(), crafty_token()
+    if not sid or not tok:
+        return None
+    try:
+        req = urllib.request.Request(
+            "%s/api/v2/servers/%s" % (CFG["crafty_url"], sid),
+            headers={"Authorization": "Bearer " + tok})
+        data = json.load(urllib.request.urlopen(req, timeout=10, context=_SSL))
+        return data.get("data") if isinstance(data.get("data"), dict) else data
+    except Exception:
+        return None
+
+
 def crafty_action(action):
     if action not in CRAFTY_ACTIONS:
         return {"ok": False, "error": "invalid action"}
@@ -889,26 +910,49 @@ def crafty_action(action):
         if ok and action == "backup_server":
             _backup["last"] = time.time()
             _save_backup_state()
-        return {"ok": ok, "status": resp.get("status"), "error": resp.get("error_data") or resp.get("error")}
+        err = resp.get("error_data") or resp.get("error")
+        if isinstance(err, dict):
+            err = err.get("message") or err.get("error") or json.dumps(err, ensure_ascii=False)
+        return {"ok": ok, "status": resp.get("status"), "error": err or (None if ok else "action failed")}
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.load(e)
+            err = body.get("error_data") or body.get("error") or body.get("message")
+        except Exception:
+            err = e.reason or str(e)
+        return {"ok": False, "error": str(err)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
 def crafty_info():
     sid = crafty_sid()
-    enabled = bool(sid) and bool(crafty_password())
+    pw = crafty_password()
+    enabled = bool(sid) and bool(pw)
     tok = crafty_token() if enabled else ""
-    mc = (_state.get("mc") or {}) if enabled else {}
+    mc = _state.get("mc") or {}
     last = _backup.get("last") or 0
+    running = bool(mc.get("online"))
+    server_name = CFG.get("mc_service_name") or "Minecraft"
+    crafty_running = None
+    st = crafty_server_state() if tok else None
+    if st:
+        crafty_running = st.get("running")
+        if crafty_running is not None:
+            running = bool(crafty_running)
+        server_name = st.get("server_name") or st.get("name") or server_name
     return {
         "enabled": enabled,
         "authenticated": bool(tok),
         "server_id": sid or "",
-        "mc_online": bool(mc.get("online")),
+        "server_name": server_name,
+        "mc_online": running,
+        "crafty_running": crafty_running,
         "players": mc.get("players", "-"),
         "last_backup": int(last) if last else 0,
         "last_backup_ago": fmt_dur(time.time() - last) if last else None,
         "actions": sorted(CRAFTY_ACTIONS),
+        "backup_enabled": bool(CFG["enable_crafty_backup"]),
     }
 
 
@@ -1435,8 +1479,12 @@ def history(rng="60"):
         except Exception:
             out = None
     if not out or not out.get("t"):
-        out = {"t": _ring["t"][:], "cpu": _ring["cpu"][:], "mem": _ring["mem"][:],
-               "load": _ring["load"][:], "source": "live"}
+        sliced = _slice_ring(rng)
+        out = {"t": sliced["t"], "cpu": sliced["cpu"], "mem": sliced["mem"],
+               "load": sliced["load"], "source": "live", "range": rng}
+    else:
+        out = dict(out)
+        out["range"] = rng
     _hist.update(t=now, range=rng, data=out)
     return out
 

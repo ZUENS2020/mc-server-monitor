@@ -90,7 +90,16 @@ fun PerformanceScreen(
         when {
             historyLoading -> item { Text("加载趋势…", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             historyError != null -> item { Text(historyError, color = MaterialTheme.colorScheme.error) }
-            history != null -> item { HistoryChart(history) }
+            history != null -> item {
+                HistoryChart(history)
+                if (history.rangeMinutes != historyRange) {
+                    Text(
+                        "正在切换到 ${historyRange} 分钟…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
         item { Spacer(Modifier.height(32.dp)) }
     }

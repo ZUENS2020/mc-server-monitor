@@ -1,6 +1,9 @@
 package com.zuens2020.mcmonitor.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -28,13 +32,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.zuens2020.mcmonitor.data.Alert
 import com.zuens2020.mcmonitor.data.HistoryData
 import com.zuens2020.mcmonitor.data.McInfo
@@ -149,26 +156,115 @@ private fun SummaryChip(label: String, count: Int, color: Color) {
 
 @Composable
 fun PlayerCard(p: PlayerInfo, detailed: Boolean = false) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(p.name, fontWeight = FontWeight.Medium)
-                Text("${p.hp} HP", style = MaterialTheme.typography.bodySmall)
-            }
-            Text("${p.dim} · ${p.pos}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (detailed) {
-                Text("饱食 ${p.food} · 等级 ${p.xp} · ${p.mode}", style = MaterialTheme.typography.bodySmall)
-                if (p.onlineFor != "-") {
-                    Text("在线 ${p.onlineFor}", style = MaterialTheme.typography.labelSmall)
+    val hp = p.hp.toFloatOrNull() ?: 0f
+    val food = p.food.toFloatOrNull() ?: 0f
+    val hpRatio = (hp / 20f).coerceIn(0f, 1f)
+    val foodRatio = (food / 20f).coerceIn(0f, 1f)
+    val danger = hp in 1f..9f || food in 1f..9f
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (danger) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+            else MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+    ) {
+        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            AsyncImage(
+                model = "https://minotar.net/helm/${p.name}/56.png",
+                contentDescription = p.name,
+                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop,
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(p.name, fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (p.mode.isNotBlank() && p.mode != "-") {
+                            Text(p.mode, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                        if (p.onlineFor.isNotBlank() && p.onlineFor != "-") {
+                            Text(p.onlineFor, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (p.place >= 400) {
+                            PlaceBadge(p.place, critical = p.place >= 800)
+                        }
+                    }
                 }
-                if (p.armor.isNotEmpty()) {
-                    Text("装备 ${p.armor.joinToString(", ")}", style = MaterialTheme.typography.labelSmall)
+                PlayerBar("HP", hpRatio, MaterialTheme.colorScheme.primary)
+                if (detailed) {
+                    PlayerBar("饱食", foodRatio, MaterialTheme.colorScheme.tertiary)
                 }
-                if (p.place > 0) {
-                    Text("近 1 分钟放置 ${p.place} 块", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+                Text(
+                    "${p.dim} · Lv.${p.xp} · ${p.pos}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (detailed) {
+                    ArmorSlotsRow(p.armorSlots)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PlayerBar(label: String, ratio: Float, color: Color) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        LinearProgressIndicator(
+            progress = { ratio },
+            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+            color = color,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+        )
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun PlaceBadge(place: Int, critical: Boolean) {
+    val bg = if (critical) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
+    Text(
+        "▲${place}/m",
+        modifier = Modifier
+            .background(bg.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        style = MaterialTheme.typography.labelSmall,
+        color = bg,
+        fontWeight = FontWeight.Bold,
+    )
+}
+
+@Composable
+fun ArmorSlotsRow(slots: List<String?>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        val items = if (slots.size >= 4) slots.take(4) else slots + List(4 - slots.size) { null }
+        items.forEach { piece ->
+            val color = armorColor(piece)
+            Box(
+                Modifier
+                    .size(width = 16.dp, height = 14.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .then(
+                        if (color != null) Modifier.background(color)
+                        else Modifier.border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(2.dp)),
+                    ),
+            )
+        }
+    }
+}
+
+private fun armorColor(piece: String?): Color? {
+    if (piece.isNullOrBlank()) return null
+    return when {
+        piece.startsWith("netherite_") -> Color(0xFF4A443F)
+        piece.startsWith("diamond_") -> Color(0xFF2F8E84)
+        piece.startsWith("iron_") -> Color(0xFF9A9C9C)
+        piece.startsWith("golden_") -> Color(0xFF9C7D22)
+        piece.startsWith("chainmail_") -> Color(0xFF6A6C6E)
+        piece.startsWith("leather_") -> Color(0xFF7A5430)
+        piece == "turtle_helmet" -> Color(0xFF45824A)
+        piece == "elytra" -> Color(0xFF8A7E9A)
+        else -> Color(0xFF777A7D)
     }
 }
 
@@ -301,9 +397,14 @@ fun HistoryChart(data: HistoryData) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                "主机趋势 (${data.source})",
+                "主机趋势 · 近 ${data.rangeMinutes} 分钟 (${data.source})",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "${data.labels.size} 个采样点",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Sparkline("CPU %", data.cpu, MaterialTheme.colorScheme.primary)
             Sparkline("内存 %", data.mem, MaterialTheme.colorScheme.tertiary)
