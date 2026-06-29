@@ -7,7 +7,7 @@ default-creds.txt
 server.properties
 *.bak
 .env
-data/
+/data/
 项目完整文档.md
 docker-compose.nec.yml
 docker-compose.override.yml
