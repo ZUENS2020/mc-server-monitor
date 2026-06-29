@@ -75,7 +75,8 @@ foreach ($p in $add) {
 
 Write-Host "=== Step 5: update project local.properties ==="
 $localProps = "J:\AndroidDev\projects\mc-monitor-android\local.properties"
-"sdk.dir=J\:\\AndroidDev\\Sdk" | Set-Content -Encoding ASCII $localProps
+Set-Content -Path $localProps -Value "sdk.dir=J:/AndroidDev/Sdk" -Encoding ASCII -NoNewline
+Add-Content -Path $localProps -Value "" -Encoding ASCII
 
 Write-Host ""
 Write-Host "Done. Next:"
