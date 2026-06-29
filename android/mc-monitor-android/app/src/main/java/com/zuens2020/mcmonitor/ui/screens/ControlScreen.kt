@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -19,10 +18,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.zuens2020.mcmonitor.data.Alert
 import com.zuens2020.mcmonitor.data.CraftyInfo
 import com.zuens2020.mcmonitor.data.ServiceGroup
-import com.zuens2020.mcmonitor.ui.components.AlertCard
 import com.zuens2020.mcmonitor.ui.components.ScreenList
 import com.zuens2020.mcmonitor.ui.components.ServiceItemCard
 import com.zuens2020.mcmonitor.ui.components.StatusChip
@@ -35,12 +32,9 @@ fun ControlScreen(
     craftyError: String?,
     craftyActionRunning: String?,
     craftyMessage: String?,
-    alerts: List<Alert>,
     groups: List<ServiceGroup>,
     onCraftyAction: (String) -> Unit,
     onLoadCrafty: () -> Unit,
-    onDismissAlert: (String) -> Unit,
-    onOpenAlertLog: () -> Unit,
     onServiceClick: (String) -> Unit,
 ) {
     ScreenList {
@@ -55,19 +49,6 @@ fun ControlScreen(
                 onAction = onCraftyAction,
                 onRefresh = onLoadCrafty,
             )
-        }
-        item {
-            RowActions(onOpenAlertLog)
-        }
-        if (alerts.isNotEmpty()) {
-            item {
-                Text("活跃预警", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            }
-            items(alerts, key = { it.key.ifBlank { it.msg } }) { a ->
-                AlertCard(a, onDismiss = if (a.key.isNotBlank() && a.level != "info") {
-                    { onDismissAlert(a.key) }
-                } else null)
-            }
         }
         item {
             Text("服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -88,13 +69,6 @@ fun ControlScreen(
     }
 }
 
-@Composable
-private fun RowActions(onOpenAlertLog: () -> Unit) {
-    FilledTonalButton(onClick = onOpenAlertLog, modifier = Modifier.fillMaxWidth()) {
-        Text("预警历史日志")
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CraftyPanel(
@@ -111,7 +85,11 @@ private fun CraftyPanel(
             when {
                 loading && crafty == null -> Text("连接 Crafty…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 crafty == null || !crafty.enabled -> Text(
-                    error ?: "Crafty 未配置。若按钮无响应，请更新 NEC 上的 dashboard.py 并重启监控服务。",
+                    when {
+                        error != null -> error
+                        crafty != null && !crafty.apiReady -> "监控服务尚未部署 Crafty 接口，请更新 dashboard.py 并重启"
+                        else -> "Crafty 未配置，请检查服务端凭据"
+                    },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 else -> {

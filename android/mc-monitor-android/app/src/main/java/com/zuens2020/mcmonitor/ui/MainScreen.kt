@@ -95,14 +95,20 @@ fun MainScreen(vm: MainViewModel) {
             else -> vm.stopPlayersPolling()
         }
         when (currentRoute) {
-            Routes.Performance, Routes.Overview -> vm.loadHistory()
-            Routes.Control -> vm.loadCrafty()
-            Routes.AlertLog -> vm.loadAlertLog()
+            Routes.Performance -> vm.loadHistory()
+            Routes.Control -> vm.startCraftyPolling()
+            else -> vm.stopCraftyPolling()
+        }
+        if (currentRoute == Routes.AlertLog) {
+            vm.loadAlertLog()
         }
     }
 
     DisposableEffect(Unit) {
-        onDispose { vm.stopPlayersPolling() }
+        onDispose {
+            vm.stopPlayersPolling()
+            vm.stopCraftyPolling()
+        }
     }
 
     if (showSettings) {
@@ -151,7 +157,7 @@ fun MainScreen(vm: MainViewModel) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { vm.refresh() }) {
+                    IconButton(onClick = { vm.refresh(currentRoute) }) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新")
                     }
                     IconButton(onClick = {
@@ -186,7 +192,7 @@ fun MainScreen(vm: MainViewModel) {
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = ui.refreshing,
-            onRefresh = { vm.refresh() },
+            onRefresh = { vm.refresh(currentRoute) },
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
             when {
@@ -196,7 +202,7 @@ fun MainScreen(vm: MainViewModel) {
                     }
                 }
                 ui.error != null && ui.status == null && currentRoute == Routes.Overview -> {
-                    ErrorPane(ui.error!!) { vm.refresh() }
+                    ErrorPane(ui.error!!) { vm.refresh(Routes.Overview) }
                 }
                 else -> {
                     val alertEntries = remember(ui.alertLog) {
@@ -225,7 +231,6 @@ fun MainScreen(vm: MainViewModel) {
                             )
                         }
                         composable(Routes.Performance) {
-                            LaunchedEffect(ui.historyRange) { vm.loadHistory(ui.historyRange) }
                             PerformanceScreen(
                                 mc = ui.status?.mc,
                                 mcPerf = ui.status?.mcPerf,
@@ -234,8 +239,6 @@ fun MainScreen(vm: MainViewModel) {
                                 history = ui.history,
                                 historyLoading = ui.historyLoading,
                                 historyError = ui.historyError,
-                                historyRange = ui.historyRange,
-                                onLoadHistory = vm::saveHistoryRange,
                             )
                         }
                         composable(Routes.Control) {
@@ -245,12 +248,9 @@ fun MainScreen(vm: MainViewModel) {
                                 craftyError = ui.craftyError,
                                 craftyActionRunning = ui.craftyActionRunning,
                                 craftyMessage = ui.craftyMessage,
-                                alerts = ui.status?.alerts ?: emptyList(),
                                 groups = ui.status?.groups ?: emptyList(),
                                 onCraftyAction = vm::runCraftyAction,
                                 onLoadCrafty = vm::loadCrafty,
-                                onDismissAlert = vm::dismissAlert,
-                                onOpenAlertLog = { nav.navigate(Routes.AlertLog) },
                                 onServiceClick = { id -> nav.navigate(Routes.detail(id)) },
                             )
                         }

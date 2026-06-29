@@ -16,13 +16,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.zuens2020.mcmonitor.data.McInfo
+import com.zuens2020.mcmonitor.data.McPerf
 import com.zuens2020.mcmonitor.data.MonitorStatus
 import com.zuens2020.mcmonitor.data.PlayerInfo
+import com.zuens2020.mcmonitor.data.SysInfo
 import com.zuens2020.mcmonitor.ui.components.AlertCard
+import com.zuens2020.mcmonitor.ui.components.LiveMetricGrid
 import com.zuens2020.mcmonitor.ui.components.NavLinkCard
 import com.zuens2020.mcmonitor.ui.components.PlayerCard
 import com.zuens2020.mcmonitor.ui.components.ScreenList
-import com.zuens2020.mcmonitor.ui.components.StatGrid
 import com.zuens2020.mcmonitor.ui.components.StatusChip
 import com.zuens2020.mcmonitor.ui.components.SummaryCard
 import com.zuens2020.mcmonitor.ui.components.UpdatedLabel
@@ -55,16 +58,7 @@ fun OverviewScreen(
 
         item {
             Text("实时概览", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            StatGrid(
-                listOf(
-                    "TPS" to (perf?.tps1m?.let { "%.1f".format(it) } ?: mc?.tps ?: "-"),
-                    "MSPT" to (perf?.msptAvg?.let { "%.1f".format(it) } ?: mc?.mspt ?: "-"),
-                    "玩家" to (mc?.players ?: "-"),
-                    "CPU" to (sys?.cpu ?: "-"),
-                    "内存" to (sys?.mem ?: "-"),
-                    "磁盘" to (sys?.disk ?: "-"),
-                ),
-            )
+            LiveMetricGrid(mc = mc, perf = perf, sys = sys)
         }
 
         if (mc != null) {
@@ -93,7 +87,7 @@ fun OverviewScreen(
             NavLinkCard("性能详情与趋势", "TPS / MSPT / 主机图表", onOpenPerformance)
         }
         item {
-            NavLinkCard("服务器控制", "Crafty 启停 / 备份 / 服务", onOpenControl)
+            NavLinkCard("服务器控制", "Crafty 启停 / 备份 / 服务详情", onOpenControl)
         }
 
         previewPlayers?.takeIf { it.isNotEmpty() }?.let { list ->
@@ -131,13 +125,10 @@ fun OverviewScreen(
         if (alerts.isEmpty()) {
             item { Text("当前无活跃预警", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
-            items(alerts.take(2), key = { it.key.ifBlank { it.msg } }) { a ->
+            items(alerts, key = { it.key.ifBlank { it.msg } }) { a ->
                 AlertCard(a, onDismiss = if (a.key.isNotBlank() && a.level != "info") {
                     { onDismissAlert(a.key) }
                 } else null)
-            }
-            if (alerts.size > 2) {
-                item { NavLinkCard("还有 ${alerts.size - 2} 条预警", "前往控制页管理", onOpenControl) }
             }
         }
         item { NavLinkCard("预警历史日志", "按级别筛选浏览", onOpenAlertLog) }

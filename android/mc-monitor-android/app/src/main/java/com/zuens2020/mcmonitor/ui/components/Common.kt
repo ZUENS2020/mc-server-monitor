@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -40,6 +42,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.zuens2020.mcmonitor.data.Alert
@@ -351,25 +354,73 @@ fun StatusChip(text: String, ok: Boolean) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun LiveMetricGrid(
+    mc: McInfo?,
+    perf: McPerf?,
+    sys: SysInfo?,
+    modifier: Modifier = Modifier,
+) {
+    StatGrid(liveMetricStats(mc, perf, sys), modifier)
+}
+
+fun liveMetricStats(
+    mc: McInfo?,
+    perf: McPerf?,
+    sys: SysInfo?,
+): List<Pair<String, String>> = listOf(
+    "TPS" to (perf?.tps1m?.let { "%.1f".format(it) } ?: mc?.tps ?: "-"),
+    "MSPT" to (perf?.msptAvg?.let { "%.1f".format(it) } ?: mc?.mspt ?: "-"),
+    "玩家" to (mc?.players ?: "-"),
+    "CPU" to (sys?.cpu ?: "-"),
+    "内存" to (sys?.mem ?: "-"),
+    "磁盘" to (sys?.disk ?: "-"),
+)
+
 @Composable
 fun StatGrid(stats: List<Pair<String, String>>, modifier: Modifier = Modifier) {
-    FlowRow(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        maxItemsInEachRow = 3,
-    ) {
-        stats.forEach { (label, value) -> StatTile(label, value) }
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        stats.chunked(3).forEach { row ->
+            Row(
+                Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { (label, value) ->
+                    StatTile(
+                        label = label,
+                        value = value,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .defaultMinSize(minWidth = 0.dp),
+                    )
+                }
+            }
+        }
     }
 }
 
 @Composable
 fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier.padding(0.dp)) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    Card(modifier) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Text(
+                value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

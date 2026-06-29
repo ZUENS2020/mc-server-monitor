@@ -2,7 +2,6 @@ package com.zuens2020.mcmonitor.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.Dispatchers
@@ -20,26 +19,18 @@ private val Context.dataStore by preferencesDataStore("settings")
 
 class SettingsRepository(private val context: Context) {
     private val baseUrlKey = stringPreferencesKey("base_url")
-    private val historyRangeKey = intPreferencesKey("history_range")
 
     val baseUrl: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[baseUrlKey] ?: DEFAULT_URL
-    }
-
-    val historyRange: Flow<Int> = context.dataStore.data.map { prefs ->
-        prefs[historyRangeKey] ?: 60
     }
 
     suspend fun setBaseUrl(url: String) {
         context.dataStore.edit { it[baseUrlKey] = url.trim().trimEnd('/') }
     }
 
-    suspend fun setHistoryRange(minutes: Int) {
-        context.dataStore.edit { it[historyRangeKey] = minutes.coerceIn(10, 360) }
-    }
-
     companion object {
         const val DEFAULT_URL = "https://monitor.zuens2020.work"
+        const val HISTORY_MINUTES = 60
     }
 }
 
@@ -67,8 +58,8 @@ class MonitorRepository {
         }
     }
 
-    suspend fun fetchHistory(baseUrl: String, rangeMinutes: Int): Result<HistoryData> =
-        getJson(baseUrl, "/api/history?range=$rangeMinutes") { HistoryData.fromJson(it) }
+    suspend fun fetchHistory(baseUrl: String): Result<HistoryData> =
+        getJson(baseUrl, "/api/history?range=${SettingsRepository.HISTORY_MINUTES}") { HistoryData.fromJson(it) }
 
     suspend fun fetchAlertLog(baseUrl: String, tail: Int = 200): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
@@ -77,8 +68,27 @@ class MonitorRepository {
         }
     }
 
-    suspend fun fetchCrafty(baseUrl: String): Result<CraftyInfo> =
-        getJson(baseUrl, "/api/crafty") { CraftyInfo.fromJson(it) }
+    suspend fun fetchCrafty(baseUrl: String): Result<CraftyInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val url = baseUrl.trimEnd('/') + "/api/crafty"
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", "McMonitor-Android/1.2.2")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string() ?: error("empty body")
+                if (!resp.isSuccessful) error("HTTP ${resp.code}: ${body.take(120)}")
+                val trimmed = body.trimStart()
+                if (trimmed.startsWith("<!") || trimmed.startsWith("<html", ignoreCase = true)) {
+                    CraftyInfo.unavailable()
+                } else {
+                    CraftyInfo.fromJson(body)
+                }
+            }
+        }
+    }
 
     suspend fun craftyAction(baseUrl: String, action: String): Result<CraftyActionResult> =
         withContext(Dispatchers.IO) {

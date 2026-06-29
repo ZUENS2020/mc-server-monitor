@@ -38,7 +38,6 @@ data class UiState(
     val history: HistoryData? = null,
     val historyLoading: Boolean = false,
     val historyError: String? = null,
-    val historyRange: Int = 60,
     val alertLog: String? = null,
     val alertLogLoading: Boolean = false,
     val alertLogError: String? = null,
@@ -60,6 +59,7 @@ class MainViewModel(
 
     private var pollJob: Job? = null
     private var playersPollJob: Job? = null
+    private var craftyPollJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -68,32 +68,24 @@ class MainViewModel(
                 restartPolling()
             }
         }
-        viewModelScope.launch {
-            settings.historyRange.collect { range ->
-                _state.update { it.copy(historyRange = range) }
-            }
-        }
     }
 
-    fun refresh() {
+    fun refresh(route: String? = null) {
         viewModelScope.launch {
             _state.update { it.copy(refreshing = true, error = null) }
             loadStatus()
             loadPlayers()
+            when (route) {
+                "control" -> loadCraftyInternal(silent = false)
+                "performance" -> loadHistory()
+                "alertlog" -> loadAlertLog()
+            }
             _state.update { it.copy(refreshing = false, loading = false) }
         }
     }
 
     fun saveBaseUrl(url: String) {
         viewModelScope.launch { settings.setBaseUrl(url) }
-    }
-
-    fun saveHistoryRange(minutes: Int) {
-        viewModelScope.launch {
-            settings.setHistoryRange(minutes)
-            _state.update { it.copy(historyRange = minutes, history = null, historyLoading = true, historyError = null) }
-            loadHistory(minutes)
-        }
     }
 
     fun refreshPlayers() {
@@ -113,6 +105,22 @@ class MainViewModel(
     fun stopPlayersPolling() {
         playersPollJob?.cancel()
         playersPollJob = null
+    }
+
+    fun startCraftyPolling() {
+        if (craftyPollJob?.isActive == true) return
+        craftyPollJob = viewModelScope.launch {
+            loadCraftyInternal(silent = false)
+            while (isActive) {
+                delay(5_000)
+                loadCraftyInternal(silent = true)
+            }
+        }
+    }
+
+    fun stopCraftyPolling() {
+        craftyPollJob?.cancel()
+        craftyPollJob = null
     }
 
     fun loadDetail(id: String) {
@@ -141,13 +149,13 @@ class MainViewModel(
         }
     }
 
-    fun loadHistory(range: Int = _state.value.historyRange) {
+    fun loadHistory() {
         viewModelScope.launch {
-            _state.update { it.copy(historyLoading = true, historyError = null, historyRange = range) }
+            _state.update { it.copy(historyLoading = true, historyError = null) }
             val url = settings.baseUrl.first()
-            monitor.fetchHistory(url, range)
+            monitor.fetchHistory(url)
                 .onSuccess { data ->
-                    _state.update { it.copy(history = data, historyLoading = false, historyRange = data.rangeMinutes) }
+                    _state.update { it.copy(history = data, historyLoading = false) }
                 }
                 .onFailure { e ->
                     _state.update { it.copy(historyLoading = false, historyError = e.message ?: "加载失败") }
@@ -168,15 +176,22 @@ class MainViewModel(
     }
 
     fun loadCrafty() {
-        viewModelScope.launch {
+        viewModelScope.launch { loadCraftyInternal(silent = false) }
+    }
+
+    private suspend fun loadCraftyInternal(silent: Boolean) {
+        if (!silent) {
             _state.update { it.copy(craftyLoading = true, craftyError = null) }
-            val url = settings.baseUrl.first()
-            monitor.fetchCrafty(url)
-                .onSuccess { info -> _state.update { it.copy(crafty = info, craftyLoading = false) } }
-                .onFailure { e ->
-                    _state.update { it.copy(craftyLoading = false, craftyError = e.message ?: "加载失败") }
-                }
         }
+        val url = settings.baseUrl.first()
+        monitor.fetchCrafty(url)
+            .onSuccess { info ->
+                _state.update { it.copy(crafty = info, craftyLoading = false, craftyError = null) }
+                if (!info.apiReady) stopCraftyPolling()
+            }
+            .onFailure { e ->
+                _state.update { it.copy(craftyLoading = false, craftyError = e.message ?: "加载失败") }
+            }
     }
 
     fun runCraftyAction(action: String) {
@@ -193,7 +208,7 @@ class MainViewModel(
                         )
                     }
                     delay(1500)
-                    loadCrafty()
+                    loadCraftyInternal(silent = true)
                     loadStatus()
                 }
                 .onFailure { e ->

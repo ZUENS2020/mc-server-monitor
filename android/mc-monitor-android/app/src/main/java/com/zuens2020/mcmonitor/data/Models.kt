@@ -374,8 +374,23 @@ data class CraftyInfo(
     val lastBackupAgo: String?,
     val actions: List<String>,
     val backupEnabled: Boolean,
+    val apiReady: Boolean = true,
 ) {
     companion object {
+        fun unavailable() = CraftyInfo(
+            enabled = false,
+            authenticated = false,
+            serverId = "",
+            serverName = "Minecraft",
+            mcOnline = false,
+            players = "-",
+            lastBackup = 0,
+            lastBackupAgo = null,
+            actions = emptyList(),
+            backupEnabled = false,
+            apiReady = false,
+        )
+
         fun fromJson(raw: String): CraftyInfo {
             val o = JSONObject(raw)
             val actions = buildList {
