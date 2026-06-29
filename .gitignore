@@ -8,6 +8,7 @@ server.properties
 *.bak
 .env
 /data/
+dist/
 项目完整文档.md
 docker-compose.nec.yml
 docker-compose.override.yml

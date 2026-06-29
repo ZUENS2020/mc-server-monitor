@@ -3,6 +3,8 @@ package com.zuens2020.mcmonitor.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -250,6 +252,47 @@ fun StatusChip(text: String, ok: Boolean) {
     val fg = if (ok) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
     Card(colors = CardDefaults.cardColors(containerColor = bg)) {
         Text(text, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), color = fg, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun StatGrid(stats: List<Pair<String, String>>, modifier: Modifier = Modifier) {
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        maxItemsInEachRow = 3,
+    ) {
+        stats.forEach { (label, value) -> StatTile(label, value) }
+    }
+}
+
+@Composable
+fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier = modifier.padding(0.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NavLinkCard(title: String, subtitle: String, onClick: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

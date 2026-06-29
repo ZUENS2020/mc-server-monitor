@@ -1,34 +1,25 @@
 # MC Monitor Android
 
-Material Design 3（Jetpack Compose）客户端，对接 [mc-server-monitor](https://github.com/ZUENS2020/mc-server-monitor) 监控面板 API。
+Material Design 3 客户端，对接监控面板 API。
 
-## 环境（J 盘 Win11）
+## 界面（v1.2）
 
-```powershell
-powershell -ExecutionPolicy Bypass -File J:\AndroidDev\setup-android-env.ps1
-```
+| Tab | 内容 |
+|-----|------|
+| **概览** | 指标网格、服务器状态、玩家预览、预警摘要 |
+| **玩家** | 实时玩家详情（3s 刷新） |
+| **性能** | TPS/MSPT/CPU/内存数值 + 30/60/120 分趋势图 |
+| **控制** | Crafty 启停/重启/备份、服务列表、预警管理 |
 
-- SDK：`J:\AndroidDev\Sdk`
-- JDK：`J:\AndroidStudio\jbr`
-- 项目：`J:\AndroidDev\projects\mc-monitor-android`
+子页面：**预警日志**（按级别筛选）、服务详情、服务日志。
 
 ## 构建
 
 ```powershell
-cd J:\AndroidDev\projects\mc-monitor-android
+cd J:\AndroidDev\projects\mc-server-monitor\android\mc-monitor-android
 .\gradlew.bat assembleRelease
-# APK: app\build\outputs\apk\release\app-release.apk
 ```
 
-## 界面
+## Crafty 控制
 
-| Tab | 功能 |
-|-----|------|
-| **概览** | MC / 主机状态、性能、活跃预警、关闭预警 |
-| **玩家** | `/api/players` 实时列表（3s 刷新）、装备/在线时长/放置速率 |
-| **服务** | 服务组列表 → 详情页（指标、CoreProtect、GrimAC）→ 日志 |
-| **管理** | 服务器 URL、预警历史、CPU/内存/负载趋势图 |
-
-## API
-
-默认 `https://monitor.zuens2020.work`，可在「管理」页修改。
+需服务端 `dashboard.py` 已配置 Crafty 凭据（`.env` / `CRAFTY_CREDS_FILE`）。App 通过 `/api/crafty` 与 `/api/crafty/action` 代理，不在手机端保存 Crafty 密码。

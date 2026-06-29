@@ -856,16 +856,60 @@ def crafty_token():
 
 def crafty_backup():
     if not CFG["enable_crafty_backup"]:
-        return
+        return False
     sid, tok = crafty_sid(), crafty_token()
     if not sid or not tok:
-        return
+        return False
     try:
         req = urllib.request.Request("%s/api/v2/servers/%s/action/backup_server" % (CFG["crafty_url"], sid),
                                      data=b"", method="POST", headers={"Authorization": "Bearer " + tok})
         urllib.request.urlopen(req, timeout=20, context=_SSL)
+        return True
     except Exception:
-        pass
+        return False
+
+
+CRAFTY_ACTIONS = {"start_server", "stop_server", "restart_server", "backup_server"}
+
+
+def crafty_action(action):
+    if action not in CRAFTY_ACTIONS:
+        return {"ok": False, "error": "invalid action"}
+    if not CFG["enable_crafty_backup"] and action == "backup_server":
+        return {"ok": False, "error": "crafty backup disabled"}
+    sid, tok = crafty_sid(), crafty_token()
+    if not sid or not tok:
+        return {"ok": False, "error": "crafty unavailable"}
+    try:
+        req = urllib.request.Request(
+            "%s/api/v2/servers/%s/action/%s" % (CFG["crafty_url"], sid, action),
+            data=b"", method="POST", headers={"Authorization": "Bearer " + tok})
+        resp = json.load(urllib.request.urlopen(req, timeout=30, context=_SSL))
+        ok = resp.get("status") == "ok"
+        if ok and action == "backup_server":
+            _backup["last"] = time.time()
+            _save_backup_state()
+        return {"ok": ok, "status": resp.get("status"), "error": resp.get("error_data") or resp.get("error")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def crafty_info():
+    sid = crafty_sid()
+    enabled = bool(sid) and bool(crafty_password())
+    tok = crafty_token() if enabled else ""
+    mc = (_state.get("mc") or {}) if enabled else {}
+    last = _backup.get("last") or 0
+    return {
+        "enabled": enabled,
+        "authenticated": bool(tok),
+        "server_id": sid or "",
+        "mc_online": bool(mc.get("online")),
+        "players": mc.get("players", "-"),
+        "last_backup": int(last) if last else 0,
+        "last_backup_ago": fmt_dur(time.time() - last) if last else None,
+        "actions": sorted(CRAFTY_ACTIONS),
+    }
 
 
 def do_alert_backup(alerts):
@@ -1910,6 +1954,8 @@ class H(BaseHTTPRequestHandler):
             self._send(json.dumps({"text": read_alertlog(q.get("tail", ["80"])[0])}))
         elif u.path == "/api/alerts/dismiss":
             self._send(json.dumps({"ok": dismiss_alert(q.get("key", [""])[0])}))
+        elif u.path == "/api/crafty":
+            self._send(json.dumps(crafty_info()))
         else:
             self._send(page_html(), "text/html; charset=utf-8")
 
@@ -1923,6 +1969,14 @@ class H(BaseHTTPRequestHandler):
             except Exception:
                 key = ""
             self._send(json.dumps({"ok": dismiss_alert(key)}))
+        elif u.path == "/api/crafty/action":
+            n = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(n).decode() if n else "{}"
+            try:
+                action = json.loads(body).get("action", "")
+            except Exception:
+                action = ""
+            self._send(json.dumps(crafty_action(action)))
         else:
             self.send_response(404)
             self.end_headers()

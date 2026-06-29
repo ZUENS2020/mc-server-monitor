@@ -77,6 +77,27 @@ class MonitorRepository {
         }
     }
 
+    suspend fun fetchCrafty(baseUrl: String): Result<CraftyInfo> =
+        getJson(baseUrl, "/api/crafty") { CraftyInfo.fromJson(it) }
+
+    suspend fun craftyAction(baseUrl: String, action: String): Result<CraftyActionResult> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val url = baseUrl.trimEnd('/') + "/api/crafty/action"
+                val json = """{"action":"$action"}"""
+                val req = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "McMonitor-Android/1.2")
+                    .post(json.toRequestBody("application/json".toMediaType()))
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: error("empty body")
+                    if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                    CraftyActionResult.fromJson(body)
+                }
+            }
+        }
+
     suspend fun dismissAlert(baseUrl: String, key: String): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
             val url = baseUrl.trimEnd('/') + "/api/alerts/dismiss"

@@ -354,3 +354,71 @@ data class HistoryData(
         }
     }
 }
+
+data class CraftyInfo(
+    val enabled: Boolean,
+    val authenticated: Boolean,
+    val serverId: String,
+    val mcOnline: Boolean,
+    val players: String,
+    val lastBackup: Long,
+    val lastBackupAgo: String?,
+    val actions: List<String>,
+) {
+    companion object {
+        fun fromJson(raw: String): CraftyInfo {
+            val o = JSONObject(raw)
+            val actions = buildList {
+                val arr = o.optJSONArray("actions") ?: return@buildList
+                for (i in 0 until arr.length()) add(arr.getString(i))
+            }
+            return CraftyInfo(
+                enabled = o.optBoolean("enabled"),
+                authenticated = o.optBoolean("authenticated"),
+                serverId = o.optString("server_id", ""),
+                mcOnline = o.optBoolean("mc_online"),
+                players = o.optString("players", "-"),
+                lastBackup = o.optLong("last_backup"),
+                lastBackupAgo = o.optString("last_backup_ago").takeIf { it.isNotBlank() },
+                actions = actions,
+            )
+        }
+    }
+}
+
+data class CraftyActionResult(val ok: Boolean, val error: String?) {
+    companion object {
+        fun fromJson(raw: String): CraftyActionResult {
+            val o = JSONObject(raw)
+            return CraftyActionResult(
+                ok = o.optBoolean("ok"),
+                error = o.optString("error").takeIf { it.isNotBlank() },
+            )
+        }
+    }
+}
+
+data class AlertLogEntry(
+    val timestamp: String,
+    val level: String,
+    val message: String,
+) {
+    val isResolved: Boolean get() = level.equals("RESOLVED", ignoreCase = true)
+
+    companion object {
+        private val lineRe = Regex("""^\[(.+?)\]\s*\[(\w+)\]\s*(.+)$""")
+
+        fun parse(text: String): List<AlertLogEntry> = buildList {
+            text.lines().asReversed().forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.isBlank() || trimmed.startsWith("(")) return@forEach
+                val m = lineRe.matchEntire(trimmed)
+                if (m != null) {
+                    add(AlertLogEntry(m.groupValues[1], m.groupValues[2], m.groupValues[3].trim()))
+                } else {
+                    add(AlertLogEntry("", "INFO", trimmed))
+                }
+            }
+        }
+    }
+}

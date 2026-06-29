@@ -3,6 +3,7 @@ package com.zuens2020.mcmonitor.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.zuens2020.mcmonitor.data.CraftyInfo
 import com.zuens2020.mcmonitor.data.HistoryData
 import com.zuens2020.mcmonitor.data.MonitorRepository
 import com.zuens2020.mcmonitor.data.MonitorStatus
@@ -42,6 +43,11 @@ data class UiState(
     val alertLogLoading: Boolean = false,
     val alertLogError: String? = null,
     val dismissingKeys: Set<String> = emptySet(),
+    val crafty: CraftyInfo? = null,
+    val craftyLoading: Boolean = false,
+    val craftyError: String? = null,
+    val craftyActionRunning: String? = null,
+    val craftyMessage: String? = null,
 )
 
 class MainViewModel(
@@ -73,6 +79,7 @@ class MainViewModel(
         viewModelScope.launch {
             _state.update { it.copy(refreshing = true, error = null) }
             loadStatus()
+            loadPlayers()
             _state.update { it.copy(refreshing = false, loading = false) }
         }
     }
@@ -149,12 +156,57 @@ class MainViewModel(
         viewModelScope.launch {
             _state.update { it.copy(alertLogLoading = true, alertLogError = null) }
             val url = settings.baseUrl.first()
-            monitor.fetchAlertLog(url)
+            monitor.fetchAlertLog(url, tail = 300)
                 .onSuccess { text -> _state.update { it.copy(alertLog = text, alertLogLoading = false) } }
                 .onFailure { e ->
                     _state.update { it.copy(alertLogLoading = false, alertLogError = e.message ?: "加载失败") }
                 }
         }
+    }
+
+    fun loadCrafty() {
+        viewModelScope.launch {
+            _state.update { it.copy(craftyLoading = true, craftyError = null) }
+            val url = settings.baseUrl.first()
+            monitor.fetchCrafty(url)
+                .onSuccess { info -> _state.update { it.copy(crafty = info, craftyLoading = false) } }
+                .onFailure { e ->
+                    _state.update { it.copy(craftyLoading = false, craftyError = e.message ?: "加载失败") }
+                }
+        }
+    }
+
+    fun runCraftyAction(action: String) {
+        if (_state.value.craftyActionRunning != null) return
+        viewModelScope.launch {
+            _state.update { it.copy(craftyActionRunning = action, craftyMessage = null) }
+            val url = settings.baseUrl.first()
+            monitor.craftyAction(url, action)
+                .onSuccess { result ->
+                    _state.update {
+                        it.copy(
+                            craftyActionRunning = null,
+                            craftyMessage = if (result.ok) actionLabel(action) + " 已发送" else (result.error ?: "操作失败"),
+                        )
+                    }
+                    delay(1500)
+                    loadCrafty()
+                    loadStatus()
+                }
+                .onFailure { e ->
+                    _state.update {
+                        it.copy(craftyActionRunning = null, craftyMessage = e.message ?: "操作失败")
+                    }
+                }
+        }
+    }
+
+    private fun actionLabel(action: String) = when (action) {
+        "start_server" -> "启动"
+        "stop_server" -> "停止"
+        "restart_server" -> "重启"
+        "backup_server" -> "备份"
+        else -> action
     }
 
     fun dismissAlert(key: String) {

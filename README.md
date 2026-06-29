@@ -90,6 +90,8 @@ systemctl --user enable --now dashboard
 | `GET /api/history?range=60` | 性能历史 |
 | `GET /api/players` | 玩家实时数据 |
 | `GET /api/alertlog?tail=N` | 报警历史 |
+| `GET /api/crafty` | Crafty 状态（在线、备份时间） |
+| `POST /api/crafty/action` | Crafty 操作 `{ "action": "start_server" \| "stop_server" \| "restart_server" \| "backup_server" }` |
 
 ## 架构
 
