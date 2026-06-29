@@ -1,7 +1,6 @@
 package com.zuens2020.mcmonitor.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,8 +56,11 @@ fun OverviewScreen(
         status?.summary?.let { s -> item { SummaryCard(s.up, s.warn, s.down) } }
 
         item {
-            Text("实时概览", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            LiveMetricGrid(mc = mc, perf = perf, sys = sys)
+            Column(Modifier.fillMaxWidth()) {
+                Text("实时概览", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                LiveMetricGrid(mc = mc, perf = perf, sys = sys)
+            }
         }
 
         if (mc != null) {

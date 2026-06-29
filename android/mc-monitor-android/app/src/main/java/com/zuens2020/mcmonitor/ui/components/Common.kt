@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -15,7 +16,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -362,7 +363,7 @@ fun LiveMetricGrid(
     sys: SysInfo?,
     modifier: Modifier = Modifier,
 ) {
-    StatGrid(liveMetricStats(mc, perf, sys), modifier)
+    StatGrid(liveMetricStats(mc, perf, sys), modifier.fillMaxWidth())
 }
 
 fun liveMetricStats(
@@ -380,21 +381,18 @@ fun liveMetricStats(
 
 @Composable
 fun StatGrid(stats: List<Pair<String, String>>, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val gap = 8.dp
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
         stats.chunked(3).forEach { row ->
-            Row(
-                Modifier.fillMaxWidth().height(IntrinsicSize.Max),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                row.forEach { (label, value) ->
-                    StatTile(
-                        label = label,
-                        value = value,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .defaultMinSize(minWidth = 0.dp),
-                    )
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val cellWidth = (maxWidth - gap * 2) / 3
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    row.forEach { (label, value) ->
+                        StatTile(label, value, Modifier.width(cellWidth))
+                    }
                 }
             }
         }
@@ -407,7 +405,9 @@ fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 10.dp),
+                .heightIn(min = 64.dp)
+                .padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
                 label,
@@ -417,7 +417,7 @@ fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
             )
             Text(
                 value,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

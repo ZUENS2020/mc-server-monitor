@@ -1,6 +1,5 @@
 package com.zuens2020.mcmonitor.ui.screens
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,8 +34,11 @@ fun PerformanceScreen(
     val perf = playersPerf ?: mcPerf
     ScreenList {
         item {
-            Text("实时指标", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            LiveMetricGrid(mc = mc, perf = perf, sys = sys)
+            Column(Modifier.fillMaxWidth()) {
+                Text("实时指标", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                LiveMetricGrid(mc = mc, perf = perf, sys = sys)
+            }
         }
         if (mc != null) {
             item {
