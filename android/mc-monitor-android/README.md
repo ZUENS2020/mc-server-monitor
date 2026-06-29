@@ -13,11 +13,20 @@ Material Design 3 客户端，对接监控面板 API。
 
 子页面：**预警日志**（按级别筛选）、服务详情、服务日志。
 
-## 构建
+## 构建（仅 Win11 / J 盘）
+
+Mac 不安装 Android SDK，不在 Mac 上构建。在 Win 开发机执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File J:\AndroidDev\projects\mc-server-monitor\android\build-release.ps1 -Version 1.2.2
+```
+
+或手动：
 
 ```powershell
 cd J:\AndroidDev\projects\mc-server-monitor\android\mc-monitor-android
 .\gradlew.bat assembleRelease
+# APK: app\build\outputs\apk\release\app-release.apk
 ```
 
 ## Crafty 控制
